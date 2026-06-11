@@ -1,0 +1,4 @@
+Date,"Value","Label","Confirmed","Category","Description","Owner Name","Owner Email","Receipt"
+2024/01/05 09:00:00,500.00,"Salary",true,"Income",,"You","you@example.com",
+2024/01/07 14:30:00,-45.50,"Groceries",true,"Food","Weekly shop","You","you@example.com",
+2024/01/10 18:00:00,-120.00,"Electricity",true,"Bills",,"You","you@example.com",

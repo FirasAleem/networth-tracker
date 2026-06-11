@@ -1,0 +1,10 @@
+node_modules
+dist
+data/*.db
+data/*.db-wal
+data/*.db-shm
+.DS_Store
+
+# Personal financial data — never commit. Samples are committed instead.
+server/seed-data.js
+seed/*.csv

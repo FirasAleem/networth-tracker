@@ -1,0 +1,13 @@
+services:
+  networth:
+    build: .
+    container_name: networth-tracker
+    ports:
+      - "2307:2307"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - PORT=2307
+      - DB_PATH=/app/data/networth.db
