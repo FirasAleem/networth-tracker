@@ -25,14 +25,20 @@ function cutoffFor(range) {
   return d.toISOString().split('T')[0]
 }
 
-export default function HistoryChart({ account = 'all', title = 'Balance History', height = 220, fill = false }) {
+export default function HistoryChart({ account = 'all', title = 'Balance History', height = 220, fill = false, source = 'transactions' }) {
   const [data, setData] = useState([])
   const [range, setRange] = useState('Max')
 
   useEffect(() => {
+    if (source === 'networth') {
+      // Daily net-worth snapshots (cash + live investments); map total -> balance.
+      fetch('/api/snapshots').then(r => r.json())
+        .then(rows => setData(rows.map(s => ({ date: s.date, balance: s.total })))).catch(() => {})
+      return
+    }
     const q = account && account !== 'all' ? `?account=${encodeURIComponent(account)}` : ''
     fetch(`/api/history${q}`).then(r => r.json()).then(setData).catch(() => {})
-  }, [account])
+  }, [account, source])
 
   // Slice to the selected range and compute the change over that window.
   const { series, change, pct, hasData } = useMemo(() => {

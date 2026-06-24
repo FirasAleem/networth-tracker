@@ -80,7 +80,7 @@ export default function App() {
                 <PieBreakdown summary={summary} />
               </div>
               <div className="lg:col-span-2">
-                <HistoryChart account="all" title="Balance History" fill />
+                <HistoryChart source="networth" title="Net Worth" fill />
               </div>
             </div>
             <DashboardHoldings summary={summary} onSelect={setSelected} />

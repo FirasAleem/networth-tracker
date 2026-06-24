@@ -188,7 +188,8 @@ app.get('/api/price-history/:ticker', async (req, res) => {
 
 app.get('/api/snapshots', (req, res) => {
   const rows = all('SELECT * FROM snapshots ORDER BY date ASC')
-  res.json(rows.map(r => ({ ...r, breakdown: r.breakdown ? JSON.parse(r.breakdown) : null })))
+  const parse = (b) => { try { return b ? JSON.parse(b) : null } catch { return null } }
+  res.json(rows.map(r => ({ ...r, breakdown: parse(r.breakdown) })))
 })
 
 app.post('/api/snapshots', (req, res) => {
@@ -311,6 +312,15 @@ app.get('/api/summary', async (req, res) => {
     return { ...h, currentPrice, marketValue, costValue, isFree, pnl, pnlPercent, marketValueSAR, priceData }
   })
   totalSAR += investmentTotal
+
+  // Daily net-worth snapshot (one row/day) so the dashboard can chart real net
+  // worth — cash + live investments — over time. ponytail: upsert on read, no
+  // cron; rewrites the DB file each call (~60s), fine at this scale.
+  const today = new Date().toISOString().split('T')[0]
+  const breakdown = JSON.stringify({ cash: cashTotal, investments: investmentTotal })
+  run(`INSERT INTO snapshots (date, total, breakdown) VALUES (?, ?, ?)
+       ON CONFLICT(date) DO UPDATE SET total=excluded.total, breakdown=excluded.breakdown`,
+      [today, totalSAR, breakdown])
 
   res.json({ total: totalSAR, cashTotal, investmentTotal, holdings: holdingDetails, cash: cashDetails, usdToSar: USD_TO_SAR })
 })
