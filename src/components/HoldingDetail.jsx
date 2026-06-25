@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
-import { X, TrendingUp, TrendingDown, Sparkles, Calendar, Plus, Trash2, Layers } from 'lucide-react'
+import { X, TrendingUp, TrendingDown, Sparkles, Calendar, Plus, Trash2, Layers, Receipt } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney, fmtQty } from '../lib/format'
 
@@ -26,6 +26,7 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
   const [loading, setLoading] = useState(true)
   const [lots, setLots] = useState([])
   const [lotForm, setLotForm] = useState({ quantity: '', cost_price: '', purchase_date: '' })
+  const [txns, setTxns] = useState([])
 
   const hasPurchase = !!holding.purchase_date
 
@@ -45,6 +46,24 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
     fetch(`/api/holdings/${holding.id}/lots`).then(r => r.json())
       .then(d => setLots(Array.isArray(d) ? d : [])).catch(() => setLots([]))
   }, [holding.id])
+
+  useEffect(() => {
+    fetch('/api/transactions').then(r => r.json())
+      .then(d => setTxns(Array.isArray(d) ? d : [])).catch(() => setTxns([]))
+  }, [])
+
+  // Trade history surfaced from existing transactions by keyword match on the
+  // ticker + the distinctive last word of the name (e.g. "Aramco", not "Saudi").
+  // ponytail: heuristic match, ≥4 chars to avoid junk substrings; misses trades
+  // logged under a generic label (e.g. "Abyan — free shares").
+  const lastWord = (holding.name || '').trim().split(/\s+/).pop()?.toLowerCase() || ''
+  const tradeKw = [holding.ticker.replace(/\..*/, '').toLowerCase(), lastWord]
+    .filter(k => k.length >= 4)
+    .filter((k, i, a) => a.indexOf(k) === i)
+  const trades = txns.filter(t => {
+    const s = `${t.description || ''} ${t.category || ''}`.toLowerCase()
+    return tradeKw.some(k => s.includes(k))
+  })
 
   async function addLot(e) {
     e.preventDefault()
@@ -206,6 +225,34 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
             <p className="text-xs text-slate-500 mt-2">Adding the first lot captures the current quantity as lot 1, then blends in the new buy.</p>
           )}
         </div>
+
+        {/* Trade history (from transactions) */}
+        {trades.length > 0 && (
+          <div className="px-6 pt-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Receipt size={14} className="text-slate-400" />
+              <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider">
+                Trade history <span className="text-slate-600 normal-case">· from transactions</span>
+              </h4>
+            </div>
+            <div className="space-y-1">
+              {trades.map(t => (
+                <div key={t.id} className="flex items-center justify-between gap-3 text-sm bg-dark-700/50 rounded-lg px-3 py-2">
+                  <div className="min-w-0">
+                    <span className="text-slate-300">{t.category || '—'}</span>
+                    {t.description && <span className="block text-xs text-slate-500 truncate">{t.description}</span>}
+                  </div>
+                  <span className="inline-flex items-center gap-3 shrink-0">
+                    <span className="text-slate-500 text-xs">{t.date}</span>
+                    <span className={`inline-flex items-center gap-1 ${t.type === 'income' ? 'text-gain' : 'text-loss'}`}>
+                      {t.type === 'income' ? '+' : '−'}<RiyalSymbol size={11} className="opacity-70" />{fmtMoney(Math.abs(t.amount))}
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* Mode toggle + change */}
         <div className="px-6 pt-5 flex items-center justify-between gap-4 flex-wrap">
