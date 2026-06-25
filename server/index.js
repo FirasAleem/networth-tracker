@@ -46,6 +46,53 @@ app.delete('/api/holdings/:id', (req, res) => {
   res.json({ ok: true })
 })
 
+// ── Purchase lots ──
+
+// Recompute a holding's aggregate (qty, weighted-avg cost, earliest date) from
+// its lots. No-op if the holding has no lots, so manually-aggregated holdings
+// keep working until you start adding lots to them.
+function recomputeHolding(holdingId) {
+  const lots = all('SELECT * FROM lots WHERE holding_id = ?', [holdingId])
+  if (lots.length === 0) return
+  const qty = lots.reduce((s, l) => s + l.quantity, 0)
+  const totalCost = lots.reduce((s, l) => s + l.quantity * l.cost_price, 0)
+  const avg = qty ? totalCost / qty : 0
+  const dates = lots.map(l => l.purchase_date).filter(Boolean).sort()
+  run(`UPDATE holdings SET quantity=?, cost_price=?, purchase_date=?, updated_at=datetime('now') WHERE id=?`,
+      [qty, avg, dates[0] || null, holdingId])
+}
+
+app.get('/api/holdings/:id/lots', (req, res) => {
+  res.json(all('SELECT * FROM lots WHERE holding_id = ? ORDER BY purchase_date, id', [req.params.id]))
+})
+
+app.post('/api/holdings/:id/lots', (req, res) => {
+  const id = req.params.id
+  const h = get('SELECT * FROM holdings WHERE id = ?', [id])
+  if (!h) return res.status(404).json({ error: 'No such holding' })
+  const quantity = Number(req.body.quantity)
+  const cost_price = Number(req.body.cost_price) || 0
+  if (!Number.isFinite(quantity) || quantity <= 0) return res.status(400).json({ error: 'quantity must be > 0' })
+  // First lot for this holding? Seed one from the existing aggregate so the
+  // pre-lot quantity/cost isn't lost.
+  if (all('SELECT id FROM lots WHERE holding_id = ?', [id]).length === 0) {
+    run('INSERT INTO lots (holding_id, quantity, cost_price, purchase_date) VALUES (?, ?, ?, ?)',
+        [id, h.quantity, h.cost_price, h.purchase_date])
+  }
+  run('INSERT INTO lots (holding_id, quantity, cost_price, purchase_date) VALUES (?, ?, ?, ?)',
+      [id, quantity, cost_price, req.body.purchase_date || null])
+  recomputeHolding(id)
+  res.json(all('SELECT * FROM lots WHERE holding_id = ? ORDER BY purchase_date, id', [id]))
+})
+
+app.delete('/api/lots/:id', (req, res) => {
+  const lot = get('SELECT * FROM lots WHERE id = ?', [req.params.id])
+  if (!lot) return res.status(404).json({ error: 'No such lot' })
+  run('DELETE FROM lots WHERE id = ?', [req.params.id])
+  recomputeHolding(lot.holding_id)
+  res.json(all('SELECT * FROM lots WHERE holding_id = ? ORDER BY purchase_date, id', [lot.holding_id]))
+})
+
 // ── Cash Accounts ──
 
 app.get('/api/cash', (req, res) => {

@@ -35,6 +35,18 @@ export async function initDb() {
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `)
+  // Purchase lots: multiple dated buys per holding. The holding row stays the
+  // aggregate (summed qty + weighted-avg cost), recomputed from its lots.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS lots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      holding_id INTEGER NOT NULL,
+      quantity REAL NOT NULL,
+      cost_price REAL NOT NULL,
+      purchase_date TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `)
   db.run(`
     CREATE TABLE IF NOT EXISTS cash_accounts (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

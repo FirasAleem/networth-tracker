@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine } from 'recharts'
-import { X, TrendingUp, TrendingDown, Sparkles, Calendar } from 'lucide-react'
+import { X, TrendingUp, TrendingDown, Sparkles, Calendar, Plus, Trash2, Layers } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney, fmtQty } from '../lib/format'
 
@@ -18,12 +18,14 @@ function cutoffFor(range) {
   return d.toISOString().split('T')[0]
 }
 
-export default function HoldingDetail({ holding, usdToSar = 3.75, onClose }) {
+export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpdate }) {
   const [raw, setRaw] = useState([])
   const [mode, setMode] = useState('price') // 'value' | 'price'
   const [range, setRange] = useState('Max')
   const [scope, setScope] = useState('owned') // 'owned' (since bought) | 'all'
   const [loading, setLoading] = useState(true)
+  const [lots, setLots] = useState([])
+  const [lotForm, setLotForm] = useState({ quantity: '', cost_price: '', purchase_date: '' })
 
   const hasPurchase = !!holding.purchase_date
 
@@ -38,6 +40,28 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose }) {
       .catch(() => setRaw([]))
       .finally(() => setLoading(false))
   }, [holding.ticker])
+
+  useEffect(() => {
+    fetch(`/api/holdings/${holding.id}/lots`).then(r => r.json())
+      .then(d => setLots(Array.isArray(d) ? d : [])).catch(() => setLots([]))
+  }, [holding.id])
+
+  async function addLot(e) {
+    e.preventDefault()
+    const body = { quantity: parseFloat(lotForm.quantity), cost_price: parseFloat(lotForm.cost_price) || 0, purchase_date: lotForm.purchase_date || null }
+    if (!(body.quantity > 0)) return
+    const r = await fetch(`/api/holdings/${holding.id}/lots`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    if (r.ok) { setLots(await r.json()); setLotForm({ quantity: '', cost_price: '', purchase_date: '' }); onUpdate?.() }
+  }
+
+  async function deleteLot(id) {
+    const r = await fetch(`/api/lots/${id}`, { method: 'DELETE' })
+    if (r.ok) { setLots(await r.json()); onUpdate?.() }
+  }
+
+  // Derive from lots so the totals update live (the holding prop is a stale snapshot).
+  const lotQty = lots.reduce((s, l) => s + l.quantity, 0)
+  const lotAvg = lotQty ? lots.reduce((s, l) => s + l.quantity * l.cost_price, 0) / lotQty : 0
 
   const { series, change, pct } = useMemo(() => {
     if (raw.length === 0) return { series: [], change: 0, pct: 0 }
@@ -145,6 +169,41 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose }) {
             <span className="inline-flex items-center gap-1.5">
               <Calendar size={13} /> Bought {new Date(holding.purchase_date).toLocaleDateString('en-SA', { day: 'numeric', month: 'short', year: 'numeric' })}
             </span>
+          )}
+        </div>
+
+        {/* Purchase lots */}
+        <div className="px-6 pt-5">
+          <div className="flex items-center gap-2 mb-2">
+            <Layers size={14} className="text-slate-400" />
+            <h4 className="text-xs font-medium text-slate-400 uppercase tracking-wider">Purchase lots</h4>
+          </div>
+          {lots.length > 0 && (
+            <div className="space-y-1 mb-3">
+              {lots.map(l => (
+                <div key={l.id} className="flex items-center justify-between text-sm bg-dark-700/50 rounded-lg px-3 py-2">
+                  <span className="text-slate-300">
+                    {fmtQty(l.quantity)} @ {sar ? '' : '$'}{fmtMoney(l.cost_price)}{sar ? ' SAR' : ''}
+                  </span>
+                  <span className="inline-flex items-center gap-3">
+                    <span className="text-slate-500 text-xs">{l.purchase_date || '—'}</span>
+                    <button onClick={() => deleteLot(l.id)} className="text-slate-500 hover:text-loss"><Trash2 size={13} /></button>
+                  </span>
+                </div>
+              ))}
+              <p className="text-xs text-slate-500 pt-1">
+                {fmtQty(lotQty)} total · avg <Money v={lotAvg} native /> / share
+              </p>
+            </div>
+          )}
+          <form onSubmit={addLot} className="flex flex-wrap items-end gap-2">
+            <input type="number" step="any" required value={lotForm.quantity} onChange={e => setLotForm({ ...lotForm, quantity: e.target.value })} placeholder="Qty" className="w-20 px-2 py-1.5 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent" />
+            <input type="number" step="any" value={lotForm.cost_price} onChange={e => setLotForm({ ...lotForm, cost_price: e.target.value })} placeholder={sar ? 'Price' : '$ Price'} className="w-24 px-2 py-1.5 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent" />
+            <input type="date" value={lotForm.purchase_date} onChange={e => setLotForm({ ...lotForm, purchase_date: e.target.value })} className="px-2 py-1.5 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent" />
+            <button type="submit" className="inline-flex items-center gap-1 px-3 py-1.5 bg-accent hover:bg-accent-light text-white rounded-lg text-sm font-medium"><Plus size={14} /> Add lot</button>
+          </form>
+          {lots.length === 0 && (
+            <p className="text-xs text-slate-500 mt-2">Adding the first lot captures the current quantity as lot 1, then blends in the new buy.</p>
           )}
         </div>
 

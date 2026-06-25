@@ -192,8 +192,12 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
       ) : (
         Object.entries(grouped).map(([account, items]) => (
           <div key={account} className="glass rounded-xl overflow-hidden">
-            <div className="px-6 py-3 border-b border-dark-500">
+            <div className="px-6 py-3 border-b border-dark-500 flex items-center justify-between gap-3">
               <h3 className="text-sm font-medium text-slate-300">{account}</h3>
+              <span className="text-sm font-semibold text-white inline-flex items-center gap-1">
+                <RiyalSymbol size={12} className="opacity-70" />
+                {formatNum(items.reduce((s, h) => s + (h.marketValueSAR || 0), 0))}
+              </span>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

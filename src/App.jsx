@@ -106,6 +106,7 @@ export default function App() {
           holding={selected}
           usdToSar={summary?.usdToSar}
           onClose={() => setSelected(null)}
+          onUpdate={fetchSummary}
         />
       )}
     </div>
