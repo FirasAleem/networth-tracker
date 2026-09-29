@@ -1,11 +1,16 @@
-import { TrendingUp, TrendingDown, Wallet, Building2, BarChart3 } from 'lucide-react'
+import { TrendingUp, TrendingDown, Wallet, PiggyBank, BarChart3, CreditCard } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney } from '../lib/format'
 
-function SARValue({ amount, size = 'text-2xl', symbolSize = 20 }) {
+// `sign` (e.g. "−") sits right before the glyph. The value wraps instead of
+// overflowing in the narrow two-column mobile cards.
+function SARValue({ amount, sign = '', symbolClass = 'text-slate-400' }) {
   return (
-    <span className="inline-flex items-center gap-1.5">
-      <RiyalSymbol size={symbolSize} className="text-slate-400" />
+    <span className="inline-flex flex-wrap items-center gap-x-1.5">
+      <span className="inline-flex items-center gap-0.5">
+        {sign}
+        <RiyalSymbol size={20} className={`${symbolClass} h-3.5 w-auto sm:h-5`} />
+      </span>
       <span>{fmtMoney(amount)}</span>
     </span>
   )
@@ -14,28 +19,39 @@ function SARValue({ amount, size = 'text-2xl', symbolSize = 20 }) {
 export default function NetWorthHeader({ summary }) {
   if (!summary) return null
 
+  const holdingCount = summary.holdings?.length || 0
+  const owed = summary.installmentsTotal > 0
+
   const cards = [
     {
-      label: 'Cash Holdings',
+      label: 'Cash',
       value: summary.cashTotal,
       icon: Wallet,
       color: 'text-emerald-400',
       bg: 'bg-emerald-500/10'
     },
     {
+      label: 'Savings & Deposits',
+      value: summary.savingsTotal,
+      icon: PiggyBank,
+      color: 'text-cyan-400',
+      bg: 'bg-cyan-500/10'
+    },
+    {
       label: 'Investments',
       value: summary.investmentTotal,
       icon: BarChart3,
       color: 'text-indigo-400',
-      bg: 'bg-indigo-500/10'
+      bg: 'bg-indigo-500/10',
+      note: `${holdingCount} ${holdingCount === 1 ? 'holding' : 'holdings'}`
     },
     {
-      label: 'Holdings Count',
-      value: summary.holdings?.length || 0,
-      icon: Building2,
-      color: 'text-amber-400',
-      bg: 'bg-amber-500/10',
-      isCurrency: false
+      label: 'Installments owed',
+      value: summary.installmentsTotal,
+      icon: CreditCard,
+      color: 'text-rose-400',
+      bg: 'bg-rose-500/10',
+      owed
     }
   ]
 
@@ -64,21 +80,23 @@ export default function NetWorthHeader({ summary }) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         {cards.map(card => (
-          <div key={card.label} className="glass glass-hover rounded-xl p-5 transition-all">
-            <div className="flex items-center gap-3 mb-3">
-              <div className={`p-2 rounded-lg ${card.bg}`}>
+          <div key={card.label} className="glass glass-hover rounded-xl p-3 sm:p-5 transition-all">
+            <div className="flex items-center gap-2 sm:gap-3 mb-2 sm:mb-3">
+              <div className={`p-1.5 sm:p-2 rounded-lg shrink-0 ${card.bg}`}>
                 <card.icon size={18} className={card.color} />
               </div>
-              <span className="text-sm text-slate-400">{card.label}</span>
+              <span className="text-xs sm:text-sm leading-tight text-slate-400">{card.label}</span>
             </div>
-            <p className="text-2xl font-semibold text-white">
-              {card.isCurrency === false
-                ? card.value
-                : <SARValue amount={card.value} />
-              }
+            <p className={`text-base sm:text-2xl font-semibold ${card.owed ? 'text-loss' : 'text-white'}`}>
+              <SARValue
+                amount={card.value}
+                sign={card.owed ? '−' : ''}
+                symbolClass={card.owed ? 'opacity-70' : 'text-slate-400'}
+              />
             </p>
+            {card.note && <p className="mt-1 text-xs text-slate-500">{card.note}</p>}
           </div>
         ))}
       </div>

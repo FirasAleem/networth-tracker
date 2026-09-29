@@ -4,7 +4,8 @@ import path from 'path'
 import { fileURLToPath } from 'url'
 import multer from 'multer'
 import { initDb, all, get, run } from './db.js'
-import { parseCSV, csvToTransactions, splitNew } from './csv.js'
+import { parseCSV, parseDate, csvToTransactions, splitNew } from './csv.js'
+import { riyadhToday, accountValue, installmentState } from './calc.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
@@ -100,30 +101,103 @@ app.delete('/api/lots/:id', (req, res) => {
 
 // ── Cash Accounts ──
 
+const CASH_TYPES = ['bank', 'physical', 'other', 'savings', 'deposit']
+const CURRENCIES = ['SAR', 'USD'] // anything else would silently be valued as SAR
+const PAYOUTS = ['monthly', 'daily']
+
+const blank = v => v == null || String(v).trim() === ''
+const numOrNull = v => (blank(v) || !Number.isFinite(Number(v)) ? null : Number(v))
+// Shared by cash + installments: a typed date must be readable (parseDate normalises it to YYYY-MM-DD); blank is fine.
+const badDate = v => !blank(v) && parseDate(v) === null
+
+// Validate a cash account body → { error } or the SQL params in column order. Only the known keys
+// are read, so the frontend can PUT a whole summary row back (computed fields and all).
+function cashParams(b) {
+  const name = String(b.name ?? '').trim()
+  if (!name) return { error: 'name is required' }
+  const type = b.type || 'bank'
+  if (!CASH_TYPES.includes(type)) return { error: `type must be one of: ${CASH_TYPES.join(', ')}` }
+  const currency = blank(b.currency) ? 'SAR' : b.currency
+  if (!CURRENCIES.includes(currency)) return { error: `currency must be one of: ${CURRENCIES.join(', ')}` }
+  if (!blank(b.payout) && !PAYOUTS.includes(b.payout)) return { error: `payout must be one of: ${PAYOUTS.join(', ')}` }
+  if (badDate(b.start_date) || badDate(b.maturity_date)) {
+    return { error: 'start_date and maturity_date must be dates (YYYY-MM-DD) or empty' }
+  }
+  return {
+    params: [
+      name, Number(b.amount) || 0, Number(b.pending) || 0, type, currency,
+      numOrNull(b.profit_rate), blank(b.payout) ? null : b.payout,
+      parseDate(b.start_date), parseDate(b.maturity_date), numOrNull(b.expected_profit)
+    ]
+  }
+}
+
 app.get('/api/cash', (req, res) => {
   res.json(all('SELECT * FROM cash_accounts ORDER BY id'))
 })
 
 app.post('/api/cash', (req, res) => {
-  const { name, amount, pending, type, currency } = req.body
+  const { error, params } = cashParams(req.body)
+  if (error) return res.status(400).json({ error })
   const result = run(
-    'INSERT INTO cash_accounts (name, amount, pending, type, currency) VALUES (?, ?, ?, ?, ?)',
-    [name, amount || 0, pending || 0, type || 'bank', currency || 'SAR']
+    `INSERT INTO cash_accounts (name, amount, pending, type, currency, profit_rate, payout, start_date, maturity_date, expected_profit)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    params
   )
   res.json(get('SELECT * FROM cash_accounts WHERE id = ?', [result.lastInsertRowid]))
 })
 
 app.put('/api/cash/:id', (req, res) => {
-  const { name, amount, pending, type, currency } = req.body
+  const { error, params } = cashParams(req.body)
+  if (error) return res.status(400).json({ error })
   run(
-    `UPDATE cash_accounts SET name=?, amount=?, pending=?, type=?, currency=?, updated_at=datetime('now') WHERE id=?`,
-    [name, amount, pending || 0, type, currency, req.params.id]
+    `UPDATE cash_accounts SET name=?, amount=?, pending=?, type=?, currency=?, profit_rate=?, payout=?, start_date=?, maturity_date=?,
+       expected_profit=?, updated_at=datetime('now') WHERE id=?`,
+    [...params, req.params.id]
   )
   res.json(get('SELECT * FROM cash_accounts WHERE id = ?', [req.params.id]))
 })
 
 app.delete('/api/cash/:id', (req, res) => {
   run('DELETE FROM cash_accounts WHERE id = ?', [req.params.id])
+  res.json({ ok: true })
+})
+
+// ── Installments ──
+// No list endpoint: the plans ride along in /api/summary.
+
+// Validate a plan body → { error } or the SQL params in column order.
+function installmentParams(b) {
+  const name = String(b.name ?? '').trim()
+  const total = Number(b.total)
+  const count = Number(b.count)
+  const paid = Number(b.paid)
+  if (!name) return { error: 'name is required' }
+  if (!Number.isFinite(total) || total <= 0) return { error: 'total must be a number greater than 0' }
+  if (!Number.isInteger(count) || count < 1) return { error: 'count must be a whole number, 1 or more' }
+  if (!Number.isInteger(paid) || paid < 0 || paid > count) return { error: 'paid must be a whole number from 0 to count' }
+  if (badDate(b.first_due)) return { error: 'first_due must be a date (YYYY-MM-DD) or empty' }
+  return { params: [name, total, count, paid, parseDate(b.first_due)] }
+}
+
+app.post('/api/installments', (req, res) => {
+  const { error, params } = installmentParams({ paid: 0, ...req.body })
+  if (error) return res.status(400).json({ error })
+  const result = run('INSERT INTO installments (name, total, count, paid, first_due) VALUES (?, ?, ?, ?, ?)', params)
+  res.json(get('SELECT * FROM installments WHERE id = ?', [result.lastInsertRowid]))
+})
+
+app.put('/api/installments/:id', (req, res) => {
+  const plan = get('SELECT id FROM installments WHERE id = ?', [req.params.id])
+  if (!plan) return res.status(404).json({ error: 'No such installment plan' })
+  const { error, params } = installmentParams(req.body)
+  if (error) return res.status(400).json({ error })
+  run('UPDATE installments SET name=?, total=?, count=?, paid=?, first_due=? WHERE id=?', [...params, req.params.id])
+  res.json(get('SELECT * FROM installments WHERE id = ?', [req.params.id]))
+})
+
+app.delete('/api/installments/:id', (req, res) => {
+  run('DELETE FROM installments WHERE id = ?', [req.params.id])
   res.json({ ok: true })
 })
 
@@ -331,19 +405,27 @@ app.delete('/api/transactions/:id', (req, res) => {
 async function computeSummary() {
   const holdings = all('SELECT h.*, (SELECT COUNT(*) FROM lots l WHERE l.holding_id = h.id) AS lot_count FROM holdings h')
   const cash = all('SELECT * FROM cash_accounts')
+  const plans = all('SELECT * FROM installments ORDER BY paid >= count, id') // open plans first
 
   const tickers = [...new Set(holdings.map(h => h.ticker))]
   const prices = tickers.length > 0 ? await fetchPrices(tickers) : {}
 
-  let totalSAR = 0
-  // Effective cash = balance minus any pending amounts (e.g. money owed to a friend).
+  // Effective cash = balance minus any pending amounts (e.g. money owed to a friend); a matured
+  // deposit also counts its profit. See accountValue.
+  const today = riyadhToday()
   const cashDetails = cash.map(c => {
-    const effective = c.amount - Math.abs(c.pending || 0)
-    const effectiveSAR = c.currency === 'USD' ? effective * USD_TO_SAR : effective
-    return { ...c, effective, effectiveSAR }
+    const v = accountValue(c, today)
+    const effectiveSAR = c.currency === 'USD' ? v.effective * USD_TO_SAR : v.effective
+    return { ...c, ...v, effectiveSAR }
   })
-  const cashTotal = cashDetails.reduce((sum, c) => sum + c.effectiveSAR, 0)
-  totalSAR += cashTotal
+  const sumSAR = rows => rows.reduce((sum, c) => sum + c.effectiveSAR, 0)
+  const isSavings = c => c.type === 'savings' || c.type === 'deposit'
+  const cashTotal = sumSAR(cashDetails.filter(c => !isSavings(c)))
+  const savingsTotal = sumSAR(cashDetails.filter(isSavings))
+
+  // Unpaid remainder of each installment plan (SAR only) is a liability.
+  const installments = plans.map(p => ({ ...p, ...installmentState(p) }))
+  const installmentsTotal = installments.reduce((sum, p) => sum + p.remaining, 0)
 
   let investmentTotal = 0
   const holdingDetails = holdings.map(h => {
@@ -359,9 +441,12 @@ async function computeSummary() {
     investmentTotal += marketValueSAR
     return { ...h, currentPrice, marketValue, costValue, isFree, pnl, pnlPercent, marketValueSAR, priceData, priceMissing }
   })
-  totalSAR += investmentTotal
 
-  return { total: totalSAR, cashTotal, investmentTotal, holdings: holdingDetails, cash: cashDetails, usdToSar: USD_TO_SAR }
+  return {
+    total: cashTotal + savingsTotal + investmentTotal - installmentsTotal,
+    cashTotal, savingsTotal, investmentTotal, installmentsTotal,
+    holdings: holdingDetails, cash: cashDetails, installments, usdToSar: USD_TO_SAR
+  }
 }
 
 app.get('/api/summary', async (req, res) => {
@@ -369,7 +454,7 @@ app.get('/api/summary', async (req, res) => {
 })
 
 // Daily net-worth snapshot (one row per Riyadh calendar day) so the dashboard can
-// chart real net worth — cash + live investments — over time. ponytail: recorded
+// chart real net worth — cash + savings + live investments − installments owed — over time. ponytail: recorded
 // hourly from start(), no cron — the last write of each Riyadh day wins, and days
 // the process is down get no row. Skipped if any holding has no live price: a gap
 // beats a snapshot valued at cost.
@@ -380,11 +465,12 @@ async function recordSnapshot() {
     console.warn('snapshot skipped — no live price for', missing.join(', '))
     return
   }
-  const date = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' })
-  const breakdown = JSON.stringify({ cash: s.cashTotal, investments: s.investmentTotal })
+  const breakdown = JSON.stringify({
+    cash: s.cashTotal, savings: s.savingsTotal, investments: s.investmentTotal, installments: s.installmentsTotal
+  })
   run(`INSERT INTO snapshots (date, total, breakdown) VALUES (?, ?, ?)
        ON CONFLICT(date) DO UPDATE SET total=excluded.total, breakdown=excluded.breakdown`,
-      [date, s.total, breakdown])
+      [riyadhToday(), s.total, breakdown])
 }
 
 // ── Serve frontend in production ──

@@ -1,0 +1,242 @@
+import { useState, useRef, useEffect } from 'react'
+import { Plus, Trash2, X, Check, Pencil } from 'lucide-react'
+import RiyalSymbol from './RiyalSymbol'
+import { fmtMoney } from '../lib/format'
+import { fmtDate } from '../lib/dates'
+import { send } from '../lib/api'
+
+const INPUT = 'w-full px-3 py-2 bg-dark-600 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent'
+const EMPTY = { id: null, name: '', total: '', count: '', paid: 0, first_due: '' }
+
+function Field({ label, children }) {
+  return (
+    <label className="block">
+      <span className="block text-xs text-slate-400 mb-1">{label}</span>
+      {children}
+    </label>
+  )
+}
+
+export default function Installments({ summary, onUpdate }) {
+  const [form, setForm] = useState(null) // null = closed; else the add/edit form (id set when editing)
+  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const formRef = useRef(null)
+
+  const plans = summary?.installments || []
+  const owed = summary?.installmentsTotal || 0
+
+  // Live per-installment amount while the form is being filled in.
+  const total = Number(form?.total)
+  const count = Number(form?.count)
+  const per = total > 0 && Number.isInteger(count) && count >= 1 ? total / count : null
+
+  // A pencil on a plan far below the form should still bring the form into view.
+  useEffect(() => {
+    if (form?.id) formRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [form?.id])
+
+  const set = patch => setForm(f => ({ ...f, ...patch }))
+
+  function openForm(next) {
+    setError('')
+    setForm(next)
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setError('')
+    setSaving(true)
+    const body = { name: form.name.trim(), total, count, first_due: form.first_due || null }
+    const err = form.id
+      ? await send('PUT', `/api/installments/${form.id}`, { ...body, paid: form.paid })
+      : await send('POST', '/api/installments', body)
+    setSaving(false)
+    if (err) return setError(err)
+    setForm(null)
+    onUpdate()
+  }
+
+  // Clicking pip i ticks up to it, or (if it's already paid) undoes back to it.
+  async function setPaid(plan, i) {
+    const err = await send('PUT', `/api/installments/${plan.id}`, {
+      name: plan.name,
+      total: plan.total,
+      count: plan.count,
+      paid: i < plan.paid ? i : i + 1,
+      first_due: plan.first_due
+    })
+    if (err) return alert(err)
+    onUpdate()
+  }
+
+  async function handleDelete(plan) {
+    if (!confirm(`Delete "${plan.name}"? This can't be undone.`)) return
+    const err = await send('DELETE', `/api/installments/${plan.id}`)
+    if (err) return alert(err)
+    if (form?.id === plan.id) setForm(null)
+    onUpdate()
+  }
+
+  return (
+    <div className="glass rounded-2xl p-6">
+      <div className="flex items-center justify-between gap-3 mb-4">
+        <div className="min-w-0 flex flex-wrap items-center gap-x-3 gap-y-0.5">
+          <h3 className="text-sm font-medium text-slate-400 uppercase tracking-wider">Installments</h3>
+          {owed > 0 && (
+            <span className="inline-flex items-center gap-1 whitespace-nowrap text-xs sm:text-sm font-medium text-loss">
+              <RiyalSymbol size={12} />{fmtMoney(owed)} owed
+            </span>
+          )}
+        </div>
+        <button
+          onClick={() => (form ? setForm(null) : openForm({ ...EMPTY }))}
+          className="shrink-0 flex items-center gap-1 text-xs text-accent hover:text-accent-light transition-colors"
+        >
+          {form ? <X size={14} /> : <Plus size={14} />}
+          {form ? 'Cancel' : 'Add'}
+        </button>
+      </div>
+
+      {form && (
+        <form ref={formRef} onSubmit={handleSubmit} className="mb-4 p-4 bg-dark-700 rounded-lg space-y-3 scroll-mt-4 animate-fade-in">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <Field label="Name">
+              <input
+                type="text"
+                value={form.name}
+                onChange={e => set({ name: e.target.value })}
+                placeholder="iPhone — card"
+                required
+                className={INPUT}
+              />
+            </Field>
+            <Field label="Total amount">
+              <input
+                type="number"
+                step="any"
+                value={form.total}
+                onChange={e => set({ total: e.target.value })}
+                required
+                className={INPUT}
+              />
+            </Field>
+            <Field label="Number of installments">
+              <input
+                type="number"
+                step="1"
+                min="1"
+                value={form.count}
+                onChange={e => set({ count: e.target.value })}
+                required
+                className={INPUT}
+              />
+            </Field>
+            <Field label="First due date (optional)">
+              <input
+                type="date"
+                value={form.first_due}
+                onChange={e => set({ first_due: e.target.value })}
+                className={`${INPUT} [color-scheme:dark]`}
+              />
+            </Field>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <button
+              type="submit"
+              disabled={saving}
+              className="flex items-center justify-center gap-2 px-4 py-2 bg-accent hover:bg-accent-light text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+            >
+              <Check size={14} />
+              {form.id ? 'Save' : 'Add'}
+            </button>
+            {per != null && (
+              <span className="text-xs text-slate-400">
+                Per installment <RiyalSymbol size={10} />{' '}{fmtMoney(per)} × {count}
+              </span>
+            )}
+            {error && <p role="alert" className="text-xs text-loss">{error}</p>}
+          </div>
+        </form>
+      )}
+
+      {plans.length === 0 ? (
+        <p className="text-slate-500 text-sm">No installment plans yet.</p>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {plans.map(plan => (
+            <div
+              key={plan.id}
+              className={`p-4 bg-dark-700 rounded-xl border border-dark-500 hover:border-dark-400 transition-colors ${plan.paidOff ? 'opacity-60' : ''}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-slate-300 truncate">{plan.name}</span>
+                    {plan.paidOff && (
+                      <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-gain/10 text-gain font-medium">
+                        Paid off
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 text-xs text-slate-500">
+                    <RiyalSymbol size={10} />{' '}{fmtMoney(plan.perInstallment)} × {plan.count}
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <button
+                    onClick={() => openForm({
+                      id: plan.id,
+                      name: plan.name,
+                      total: plan.total,
+                      count: plan.count,
+                      paid: plan.paid,
+                      first_due: plan.first_due || ''
+                    })}
+                    aria-label={`Edit ${plan.name}`}
+                    className="p-1.5 text-slate-500 hover:text-accent transition-colors"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(plan)}
+                    aria-label={`Delete ${plan.name}`}
+                    className="p-1.5 text-slate-500 hover:text-loss transition-colors"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-3 flex items-center gap-2">
+                <RiyalSymbol size={18} className="text-slate-500" />
+                <span className="text-2xl font-semibold text-white">{fmtMoney(plan.remaining)}</span>
+                <span className="text-xs text-slate-500">remaining</span>
+              </div>
+              {plan.nextDue && (
+                <div className="mt-1 text-xs text-slate-400">next due {fmtDate(plan.nextDue, false)}</div>
+              )}
+
+              <div role="group" aria-label={`${plan.name} installments`} className="mt-3 flex flex-wrap gap-1.5">
+                {Array.from({ length: plan.count }, (_, i) => {
+                  const paid = i < plan.paid
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => setPaid(plan, i)}
+                      aria-label={`Mark installment ${i + 1} ${paid ? 'unpaid' : 'paid'}`}
+                      className={`w-5 h-5 rounded-full border transition-colors ${
+                        paid ? 'bg-accent border-accent' : 'border-slate-600 hover:border-accent'
+                      }`}
+                    />
+                  )
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}

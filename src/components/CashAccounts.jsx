@@ -8,7 +8,8 @@ export default function CashAccounts({ summary, onUpdate }) {
   const [showAdd, setShowAdd] = useState(false)
   const [newAccount, setNewAccount] = useState({ name: '', amount: '', type: 'bank', currency: 'SAR', pending: '' })
 
-  const accounts = summary?.cash || []
+  // Savings and fixed deposits live in their own section (SavingsDeposits).
+  const accounts = (summary?.cash || []).filter(a => a.type !== 'savings' && a.type !== 'deposit')
 
   async function handleSave(account) {
     const val = editing[account.id]

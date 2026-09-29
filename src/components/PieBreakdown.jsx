@@ -28,6 +28,10 @@ export default function PieBreakdown({ summary }) {
 
   const data = [...cashByAccount, ...investmentSlices].filter(d => d.value > 0)
 
+  // Shares are of total assets (the slices), not summary.total, which is net of installments.
+  const totalAssets = data.reduce((sum, d) => sum + d.value, 0)
+  const pct = value => ((value / totalAssets) * 100).toFixed(1)
+
   if (data.length === 0) {
     return (
       <div className="glass rounded-2xl p-6 h-full flex items-center justify-center">
@@ -39,14 +43,13 @@ export default function PieBreakdown({ summary }) {
   const CustomTooltip = ({ active, payload }) => {
     if (!active || !payload?.length) return null
     const d = payload[0]
-    const pct = ((d.value / summary.total) * 100).toFixed(1)
     return (
       <div className="glass rounded-lg px-3 py-2 text-sm">
         <p className="text-white font-medium">{d.name}</p>
         <p className="text-slate-300 inline-flex items-center gap-1">
           <RiyalSymbol size={12} className="opacity-70" /> {fmtMoney(d.value)}
         </p>
-        <p className="text-slate-400">{pct}%</p>
+        <p className="text-slate-400">{pct(d.value)}%</p>
       </div>
     )
   }
@@ -81,10 +84,18 @@ export default function PieBreakdown({ summary }) {
               <div className="w-3 h-3 rounded-full" style={{ backgroundColor: COLORS[i % COLORS.length] }} />
               <span className="text-slate-300">{d.name}</span>
             </div>
-            <span className="text-slate-400">{((d.value / summary.total) * 100).toFixed(1)}%</span>
+            <span className="text-slate-400">{pct(d.value)}%</span>
           </div>
         ))}
       </div>
+      {summary.installmentsTotal > 0 && (
+        <div className="flex items-center justify-between mt-3 pt-3 border-t border-dark-500 text-sm text-slate-500">
+          <span>Installments owed</span>
+          <span className="inline-flex items-center gap-1">
+            −<RiyalSymbol size={11} />{fmtMoney(summary.installmentsTotal)}
+          </span>
+        </div>
+      )}
     </div>
   )
 }

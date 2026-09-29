@@ -133,23 +133,38 @@ CSVs in `seed/`, then reset the DB (see above) to re-seed.
 
 ## Using the app
 
-- **Dashboard** — big net-worth number; cash / investments / holdings cards; an
-  allocation pie; a **net-worth chart** drawn from daily snapshots (cash + live
-  investments) with a time-range selector (1D…Max) that also shows the period
-  P&L; and a **holdings list** with live value and P&L per position. The server
-  records a snapshot every hour, whether or not the page is open, keyed by the
-  Riyadh calendar date (the last one of the day wins). A write is skipped when a
-  live price is unavailable rather than recording a value at cost, so a day can
-  have no snapshot. The CSV balance history lives on the **Transactions** tab.
+- **Dashboard** — big net-worth number (cash + savings/deposits + investments −
+  installments owed); cash / savings & deposits / investments / installments
+  owed cards; an allocation pie; a **net-worth chart** drawn from daily
+  snapshots of that total with a time-range selector (1D…Max) that also shows
+  the period P&L; and a **holdings list** with live value and P&L per position.
+  The server records a snapshot every hour, whether or not the page is open,
+  keyed by the Riyadh calendar date (the last one of the day wins). A write is
+  skipped when a live price is unavailable rather than recording a value at
+  cost, so a day can have no snapshot. The CSV balance history lives on the
+  **Transactions** tab.
 - **Copy to Notes** (top-right) — copies a plain-text snapshot in the original
   notes format (`x=… y=… 100x+y+z+3.75(s+a) = total`), regenerated from live
-  data. The eye icon previews exactly what will be copied. Works over plain http
-  on a LAN (falls back to `execCommand` when the Clipboard API is unavailable).
+  data; installments you still owe come off the end as `-i`. The eye icon
+  previews exactly what will be copied. Works over plain http on a LAN (falls
+  back to `execCommand` when the Clipboard API is unavailable).
 - **Holdings** — add/edit/delete positions. Live price, market value, and P&L
   update every 60s. Pick currency (USD auto-converts to SAR). Free shares (cost 0)
   show a **FREE** badge and **∞%** return.
 - **Cash & Bank** — edit balances inline. The second field is a *pending* amount
   that's subtracted from your net worth (e.g. money you owe a friend).
+- **Savings & Deposits** — accounts that earn a profit. Type it in: usually a
+  yearly rate (% p.a.) paid monthly or daily, sometimes a fixed expected amount per
+  month instead. Only the balance counts toward net worth; paid profit shows up
+  when you next update the balance. A **fixed-term deposit** (start and maturity
+  dates, plus a rate or the total profit) counts just its principal until
+  maturity, with the expected profit shown alongside. Once the maturity date
+  arrives (Riyadh time) it counts principal + profit and gets a **matured** flag —
+  your cue to move the money into cash.
+- **Installments** — a credit-card purchase split into N equal monthly payments.
+  Tick each one off as you pay it; the unpaid remainder is subtracted from your
+  net worth. Only these plans are tracked, not the card's regular balance, and
+  only in SAR.
 - **Transactions** — toggle between **Combined / Bank / Cash** to filter both the
   balance-history chart (built from the transactions) and the list. Add manually,
   **Import CSV** (choose which account to tag it as), or **Export CSV**. Import
@@ -231,7 +246,7 @@ from the private one.
 ```bash
 npm install
 npm run dev      # Vite on :5173 (proxies /api to the backend on :2307)
-npm test         # CSV import unit tests (node --test)
+npm test         # CSV import + savings/deposit/installment calc tests (node --test)
 ```
 
 For a production-style run without Docker:

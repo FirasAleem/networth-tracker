@@ -3,7 +3,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 import { X, TrendingUp, TrendingDown, Sparkles, Calendar, Plus, Trash2, Layers, Receipt } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney, fmtQty } from '../lib/format'
-import { RANGES as ALL_RANGES, cutoffFor } from '../lib/dates'
+import { RANGES as ALL_RANGES, cutoffFor, fmtDate } from '../lib/dates'
 
 // The detail chart starts at 1M (no 1D / 1W).
 const RANGES = ALL_RANGES.filter(r => !r.days || r.days >= 30)
@@ -184,7 +184,7 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
           )}
           {holding.purchase_date && (
             <span className="inline-flex items-center gap-1.5">
-              <Calendar size={13} /> Bought {new Date(holding.purchase_date).toLocaleDateString('en-SA', { day: 'numeric', month: 'short', year: 'numeric' })}
+              <Calendar size={13} /> Bought {fmtDate(holding.purchase_date)}
             </span>
           )}
         </div>

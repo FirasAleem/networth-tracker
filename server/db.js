@@ -53,8 +53,13 @@ export async function initDb() {
       name TEXT NOT NULL,
       amount REAL NOT NULL DEFAULT 0,
       pending REAL NOT NULL DEFAULT 0,
-      type TEXT NOT NULL DEFAULT 'bank',
+      type TEXT NOT NULL DEFAULT 'bank', -- bank | physical | other | savings | deposit
       currency TEXT NOT NULL DEFAULT 'SAR',
+      profit_rate REAL,                  -- annual %, savings/deposit
+      payout TEXT,                       -- monthly | daily (savings)
+      start_date TEXT,                   -- deposit term
+      maturity_date TEXT,
+      expected_profit REAL,              -- deposit: total at maturity; savings: per month
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `)
@@ -63,6 +68,25 @@ export async function initDb() {
   if (!cashCols.includes('pending')) {
     db.run('ALTER TABLE cash_accounts ADD COLUMN pending REAL NOT NULL DEFAULT 0')
   }
+  // Migration: savings/deposit profit columns (all nullable).
+  const profitCols = {
+    profit_rate: 'REAL', payout: 'TEXT', start_date: 'TEXT', maturity_date: 'TEXT', expected_profit: 'REAL'
+  }
+  for (const [col, type] of Object.entries(profitCols)) {
+    if (!cashCols.includes(col)) db.run(`ALTER TABLE cash_accounts ADD COLUMN ${col} ${type}`)
+  }
+  // Credit-card installment plans: `total` split into `count` monthly payments, `paid` ticked off by hand.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS installments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      total REAL NOT NULL,
+      count INTEGER NOT NULL,
+      paid INTEGER NOT NULL DEFAULT 0,
+      first_due TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `)
   db.run(`
     CREATE TABLE IF NOT EXISTS snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

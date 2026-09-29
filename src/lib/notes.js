@@ -3,15 +3,19 @@
 //   x=27
 //   y=10000
 //   z=20000-5000
+//   p=50000+1187.5
 //   s=100.00
 //   a=200.00
+//   i=3749.22
 //
 //
-//   100x+y+z+3.75(s+a) = ...
+//   100x+y+z+p+3.75(s+a)-i = ...
 //
-// SAR stock holdings become priced terms (x), SAR cash accounts become plain
-// vars (y, z…), and USD accounts are grouped under the 3.75 conversion (s, a…),
-// with variable letters mnemonic to the account name where possible.
+// SAR stock holdings become priced terms (x), SAR cash accounts of every type
+// become plain vars (y, z…) — "+profit" once a deposit has matured, "-pending"
+// for pending amounts — and USD accounts are grouped under the 3.75 conversion
+// (s, a…), with variable letters mnemonic to the account name where possible.
+// Installments still owed are a var (i) subtracted at the end.
 
 const plain = (n) => {
   const r = Math.round((Number(n) + Number.EPSILON) * 100) / 100
@@ -46,11 +50,13 @@ export function buildNotesText(summary) {
     sarTerms.push(`${plain(h.quantity)}${v}`)
   }
 
-  // SAR cash accounts → plain vars (y, z…); pending shown as a subtraction
+  // SAR cash accounts (all types) → plain vars (y, z…); a matured deposit's
+  // profit is added and pending shown as a subtraction
   for (const c of (summary.cash || []).filter(c => c.currency === 'SAR')) {
     const v = pick('y', ['z', 'p', 'q', 'r'])
     const pend = Math.abs(c.pending || 0)
-    defs.push(pend ? `${v}=${plain(c.amount)}-${plain(pend)}` : `${v}=${plain(c.amount)}`)
+    const profit = c.matured && c.expectedProfit ? `+${plain(c.expectedProfit)}` : ''
+    defs.push(`${v}=${plain(c.amount)}${profit}${pend ? `-${plain(pend)}` : ''}`)
     sarTerms.push(v)
   }
 
@@ -62,7 +68,7 @@ export function buildNotesText(summary) {
   }
   for (const c of (summary.cash || []).filter(c => c.currency === 'USD')) {
     const k = c.name || 'USD'
-    usdGroups[k] = (usdGroups[k] || 0) + (c.amount - Math.abs(c.pending || 0))
+    usdGroups[k] = (usdGroups[k] || 0) + c.effective
   }
   const usdVars = []
   for (const [acct, total] of Object.entries(usdGroups)) {
@@ -71,10 +77,18 @@ export function buildNotesText(summary) {
     usdVars.push(v)
   }
 
+  // Installments still owed (SAR) → one var, subtracted after the USD group
+  let owedVar = ''
+  if (summary.installmentsTotal > 0) {
+    owedVar = pick('i', ['l', 'o', 'k'])
+    defs.push(`${owedVar}=${plain(summary.installmentsTotal)}`)
+  }
+
   let formula = sarTerms.join('+')
   if (usdVars.length) {
     formula += `${sarTerms.length ? '+' : ''}${plain(rate)}(${usdVars.join('+')})`
   }
+  if (owedVar) formula += `-${owedVar}`
   formula += ` = ${commas(summary.total)}`
 
   return `${defs.join('\n')}\n\n\n${formula}`

@@ -5,6 +5,21 @@ export function today() {
   return new Date().toLocaleDateString('en-CA')
 }
 
+// 'YYYY-MM-DD' → local Date. new Date(str) would parse it as UTC midnight.
+export function toLocalDate(str) {
+  const [y, m, d] = str.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+// 'YYYY-MM-DD' → "12 Mar 2026" (or "12 Mar"). Built day-first by hand because
+// the en-SA locale orders a full date month-first ("Mar 12, 2026"); only the
+// month name comes from the locale.
+export function fmtDate(str, withYear = true) {
+  const d = toLocalDate(str)
+  const dayMonth = `${d.getDate()} ${d.toLocaleDateString('en-SA', { month: 'short' })}`
+  return withYear ? `${dayMonth} ${d.getFullYear()}` : dayMonth
+}
+
 export const RANGES = [
   { key: '1D', days: 1 },
   { key: '1W', days: 7 },

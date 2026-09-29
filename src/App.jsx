@@ -6,6 +6,8 @@ import DashboardHoldings from './components/DashboardHoldings'
 import HoldingDetail from './components/HoldingDetail'
 import CopyToNotes from './components/CopyToNotes'
 import CashAccounts from './components/CashAccounts'
+import SavingsDeposits from './components/SavingsDeposits'
+import Installments from './components/Installments'
 import HistoryChart from './components/HistoryChart'
 import Transactions from './components/Transactions'
 
@@ -85,6 +87,8 @@ export default function App() {
             </div>
             <DashboardHoldings summary={summary} onSelect={setSelected} />
             <CashAccounts summary={summary} onUpdate={fetchSummary} />
+            <SavingsDeposits summary={summary} onUpdate={fetchSummary} />
+            <Installments summary={summary} onUpdate={fetchSummary} />
           </div>
         )}
 
