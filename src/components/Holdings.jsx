@@ -1,26 +1,19 @@
 import { useState } from 'react'
-import { Plus, Trash2, TrendingUp, TrendingDown, Pencil, X, Check, Sparkles } from 'lucide-react'
+import { Plus, Trash2, TrendingUp, TrendingDown, Pencil, X, Check, Sparkles, AlertTriangle } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney, fmtQty } from '../lib/format'
 
-function formatNum(n, decimals = 2) {
-  return new Intl.NumberFormat('en-SA', {
-    minimumFractionDigits: decimals,
-    maximumFractionDigits: decimals
-  }).format(n || 0)
-}
-
 // Money cell: SAR shows the Riyal glyph, USD shows $.
-function Money({ value, currency, decimals = 2 }) {
+function Money({ value, currency }) {
   if (currency === 'SAR') {
     return (
       <span className="inline-flex items-center gap-1">
         <RiyalSymbol size={13} className="opacity-70" />
-        {formatNum(value, decimals)}
+        {fmtMoney(value)}
       </span>
     )
   }
-  return <span>${formatNum(value, decimals)}</span>
+  return <span>${fmtMoney(value)}</span>
 }
 
 const EMPTY = { ticker: '', name: '', quantity: '', cost_price: '', purchase_date: '', account: '', currency: 'USD' }
@@ -32,6 +25,8 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
   const [saving, setSaving] = useState(false)
 
   const holdings = summary?.holdings || []
+  // Qty / cost / date of a holding with purchase lots are derived from its lots server-side.
+  const lotManaged = holdings.find(h => h.id === editId)?.lot_count > 0
 
   const grouped = holdings.reduce((acc, h) => {
     const key = h.account || 'Default'
@@ -61,8 +56,9 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
     onUpdate()
   }
 
-  async function handleDelete(id) {
-    await fetch(`/api/holdings/${id}`, { method: 'DELETE' })
+  async function handleDelete(h) {
+    if (!confirm(`Delete "${h.name || h.ticker}"? This can't be undone.`)) return
+    await fetch(`/api/holdings/${h.id}`, { method: 'DELETE' })
     onUpdate()
   }
 
@@ -125,7 +121,8 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
                 value={form.quantity}
                 onChange={e => setForm({ ...form, quantity: e.target.value })}
                 required
-                className="w-full px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent"
+                disabled={lotManaged}
+                className="w-full px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent disabled:opacity-50"
               />
             </div>
             <div>
@@ -136,7 +133,8 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
                 value={form.cost_price}
                 onChange={e => setForm({ ...form, cost_price: e.target.value })}
                 required
-                className="w-full px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent"
+                disabled={lotManaged}
+                className="w-full px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent disabled:opacity-50"
               />
             </div>
           </div>
@@ -147,7 +145,8 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
                 type="date"
                 value={form.purchase_date}
                 onChange={e => setForm({ ...form, purchase_date: e.target.value })}
-                className="w-full px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent"
+                disabled={lotManaged}
+                className="w-full px-3 py-2 bg-dark-700 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent disabled:opacity-50"
               />
             </div>
             <div>
@@ -182,6 +181,11 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
               </button>
             </div>
           </div>
+          {lotManaged && (
+            <p className="text-xs text-slate-500">
+              Quantity, cost and date come from this holding's purchase lots — open the holding to change them.
+            </p>
+          )}
         </form>
       )}
 
@@ -196,7 +200,7 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
               <h3 className="text-sm font-medium text-slate-300">{account}</h3>
               <span className="text-sm font-semibold text-white inline-flex items-center gap-1">
                 <RiyalSymbol size={12} className="opacity-70" />
-                {formatNum(items.reduce((s, h) => s + (h.marketValueSAR || 0), 0))}
+                {fmtMoney(items.reduce((s, h) => s + (h.marketValueSAR || 0), 0))}
               </span>
             </div>
             <div className="overflow-x-auto">
@@ -226,6 +230,11 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
                           <div>
                             <span className="font-medium text-white inline-flex items-center gap-1.5">
                               {h.name || h.ticker}
+                              {h.priceMissing && (
+                                <span title="No live price — valued at cost" className="shrink-0">
+                                  <AlertTriangle size={12} className="text-amber-400" />
+                                </span>
+                              )}
                               {h.isFree && (
                                 <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400">
                                   <Sparkles size={9} /> FREE
@@ -246,7 +255,7 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
                           </span>
                         </td>
                         <td className={`px-6 py-4 font-medium ${h.isFree ? 'text-amber-400' : isUp ? 'text-gain' : 'text-loss'}`}>
-                          {h.isFree ? '∞%' : `${isUp ? '+' : ''}${formatNum(h.pnlPercent)}%`}
+                          {h.isFree ? '∞%' : `${isUp ? '+' : ''}${fmtMoney(h.pnlPercent)}%`}
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
@@ -257,7 +266,7 @@ export default function Holdings({ summary, onUpdate, onSelect }) {
                               <Pencil size={14} />
                             </button>
                             <button
-                              onClick={(e) => { e.stopPropagation(); handleDelete(h.id) }}
+                              onClick={(e) => { e.stopPropagation(); handleDelete(h) }}
                               className="p-1.5 text-slate-500 hover:text-loss transition-colors"
                             >
                               <Trash2 size={14} />

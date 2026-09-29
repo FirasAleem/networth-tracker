@@ -1,11 +1,8 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip } from 'recharts'
 import RiyalSymbol from './RiyalSymbol'
+import { fmtMoney } from '../lib/format'
 
 const COLORS = ['#22c55e', '#6366f1', '#f59e0b', '#ec4899', '#06b6d4', '#8b5cf6', '#14b8a6', '#f97316']
-
-function formatNum(n) {
-  return new Intl.NumberFormat('en-SA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0)
-}
 
 export default function PieBreakdown({ summary }) {
   if (!summary) return null
@@ -47,7 +44,7 @@ export default function PieBreakdown({ summary }) {
       <div className="glass rounded-lg px-3 py-2 text-sm">
         <p className="text-white font-medium">{d.name}</p>
         <p className="text-slate-300 inline-flex items-center gap-1">
-          <RiyalSymbol size={12} className="opacity-70" /> {formatNum(d.value)}
+          <RiyalSymbol size={12} className="opacity-70" /> {fmtMoney(d.value)}
         </p>
         <p className="text-slate-400">{pct}%</p>
       </div>

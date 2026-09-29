@@ -3,27 +3,7 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'rec
 import { TrendingUp, TrendingDown } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney } from '../lib/format'
-
-const RANGES = [
-  { key: '1D', days: 1 },
-  { key: '1W', days: 7 },
-  { key: '1M', days: 30 },
-  { key: '3M', days: 90 },
-  { key: '6M', days: 180 },
-  { key: 'YTD', ytd: true },
-  { key: '1Y', days: 365 },
-  { key: '3Y', days: 365 * 3 },
-  { key: '5Y', days: 365 * 5 },
-  { key: 'Max', all: true },
-]
-
-function cutoffFor(range) {
-  if (range.all) return null
-  const d = new Date()
-  if (range.ytd) return `${d.getFullYear()}-01-01`
-  d.setDate(d.getDate() - range.days)
-  return d.toISOString().split('T')[0]
-}
+import { RANGES, cutoffFor } from '../lib/dates'
 
 export default function HistoryChart({ account = 'all', title = 'Balance History', height = 220, fill = false, source = 'transactions' }) {
   const [data, setData] = useState([])

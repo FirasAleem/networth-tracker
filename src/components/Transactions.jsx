@@ -3,15 +3,17 @@ import { Upload, Download, Plus, X, Check, Trash2 } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import HistoryChart from './HistoryChart'
 import { fmtMoney } from '../lib/format'
+import { today } from '../lib/dates'
 
 export default function Transactions() {
   const [transactions, setTransactions] = useState([])
   const [accounts, setAccounts] = useState([])
   const [filter, setFilter] = useState('all')
   const [showForm, setShowForm] = useState(false)
-  const [form, setForm] = useState({ date: new Date().toISOString().split('T')[0], category: '', description: '', amount: '', type: 'expense', account: '' })
+  const [form, setForm] = useState({ date: today(), category: '', description: '', amount: '', type: 'expense', account: '' })
   const [importAccount, setImportAccount] = useState('')
   const [importing, setImporting] = useState(false)
+  const [importStatus, setImportStatus] = useState('')
   const fileRef = useRef(null)
 
   const loadTransactions = useCallback(() => {
@@ -31,31 +33,46 @@ export default function Transactions() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, amount: parseFloat(form.amount) })
     })
-    setForm({ date: new Date().toISOString().split('T')[0], category: '', description: '', amount: '', type: 'expense', account: form.account })
+    setForm({ date: today(), category: '', description: '', amount: '', type: 'expense', account: form.account })
     setShowForm(false)
     loadTransactions()
   }
 
-  async function handleDelete(id) {
-    await fetch(`/api/transactions/${id}`, { method: 'DELETE' })
-    setTransactions(transactions.filter(t => t.id !== id))
+  async function handleDelete(tx) {
+    if (!confirm(`Delete ${tx.date} · ${tx.description || fmtMoney(tx.amount)}?`)) return
+    await fetch(`/api/transactions/${tx.id}`, { method: 'DELETE' })
+    setTransactions(transactions.filter(t => t.id !== tx.id))
   }
 
   async function handleImport(e) {
     const file = e.target.files?.[0]
     if (!file) return
     setImporting(true)
-    const formData = new FormData()
-    formData.append('file', file)
-    formData.append('account', importAccount)
-    const res = await fetch('/api/transactions/import', { method: 'POST', body: formData })
-    const data = await res.json()
-    if (data.imported) {
-      loadTransactions()
-      fetch('/api/transactions/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
+    setImportStatus('')
+    try {
+      const formData = new FormData()
+      formData.append('file', file)
+      formData.append('account', importAccount)
+      const res = await fetch('/api/transactions/import', { method: 'POST', body: formData })
+      const data = await res.json()
+      if (!res.ok) {
+        setImportStatus(data.error || 'Import failed')
+      } else {
+        const parts = [`Imported ${data.imported}`]
+        if (data.skipped) parts.push(`skipped ${data.skipped} duplicate${data.skipped === 1 ? '' : 's'}`)
+        if (data.invalid) parts.push(`${data.invalid} invalid`)
+        setImportStatus(parts.join(' · '))
+        if (data.imported > 0) {
+          loadTransactions()
+          fetch('/api/transactions/accounts').then(r => r.json()).then(setAccounts).catch(() => {})
+        }
+      }
+    } catch {
+      setImportStatus('Import failed')
+    } finally {
+      setImporting(false)
+      if (fileRef.current) fileRef.current.value = ''
     }
-    setImporting(false)
-    if (fileRef.current) fileRef.current.value = ''
   }
 
   const totalIncome = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
@@ -100,6 +117,8 @@ export default function Transactions() {
           </button>
         </div>
       </div>
+
+      {importStatus && <p className="-mt-3 text-sm text-slate-400">{importStatus}</p>}
 
       {/* Account filter toggle */}
       {accounts.length > 0 && (
@@ -214,7 +233,7 @@ export default function Transactions() {
                       </span>
                     </td>
                     <td className="px-4 py-3 text-right">
-                      <button onClick={() => handleDelete(t.id)} className="p-1.5 text-slate-500 hover:text-loss transition-colors">
+                      <button onClick={() => handleDelete(t)} className="p-1.5 text-slate-500 hover:text-loss transition-colors">
                         <Trash2 size={14} />
                       </button>
                     </td>

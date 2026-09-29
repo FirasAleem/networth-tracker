@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Plus, Save, Trash2, X, AlertTriangle } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
+import { fmtMoney } from '../lib/format'
 
 export default function CashAccounts({ summary, onUpdate }) {
   const [editing, setEditing] = useState({})
@@ -12,8 +13,8 @@ export default function CashAccounts({ summary, onUpdate }) {
   async function handleSave(account) {
     const val = editing[account.id]
     if (!val) return
-    const amount = val.amount !== undefined ? parseFloat(val.amount) : account.amount
-    const pending = val.pending !== undefined ? parseFloat(val.pending) || 0 : account.pending || 0
+    const amount = val.amount !== undefined ? Number(val.amount) || 0 : account.amount
+    const pending = val.pending !== undefined ? Number(val.pending) || 0 : account.pending || 0
     await fetch(`/api/cash/${account.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -35,8 +36,9 @@ export default function CashAccounts({ summary, onUpdate }) {
     onUpdate()
   }
 
-  async function handleDelete(id) {
-    await fetch(`/api/cash/${id}`, { method: 'DELETE' })
+  async function handleDelete(account) {
+    if (!confirm(`Delete "${account.name}"? This can't be undone.`)) return
+    await fetch(`/api/cash/${account.id}`, { method: 'DELETE' })
     onUpdate()
   }
 
@@ -125,6 +127,7 @@ export default function CashAccounts({ summary, onUpdate }) {
           const amount = getEditVal(account, 'amount') || 0
           const effective = parseFloat(amount) - Math.abs(parseFloat(pending) || 0)
           const hasPending = parseFloat(pending) > 0
+          const usd = account.currency === 'USD'
 
           return (
             <div key={account.id} className="p-4 bg-dark-700 rounded-xl border border-dark-500 hover:border-dark-400 transition-colors">
@@ -133,7 +136,7 @@ export default function CashAccounts({ summary, onUpdate }) {
                 <div className="flex items-center gap-1">
                   <span className="text-xs text-slate-500 px-2 py-0.5 bg-dark-600 rounded">{account.currency}</span>
                   <button
-                    onClick={() => handleDelete(account.id)}
+                    onClick={() => handleDelete(account)}
                     className="p-1 text-slate-600 hover:text-loss transition-colors"
                   >
                     <Trash2 size={12} />
@@ -141,7 +144,9 @@ export default function CashAccounts({ summary, onUpdate }) {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <RiyalSymbol size={18} className="text-slate-500" />
+                {usd
+                  ? <span className="text-2xl font-semibold text-slate-500">$</span>
+                  : <RiyalSymbol size={18} className="text-slate-500" />}
                 <input
                   type="number"
                   step="any"
@@ -174,7 +179,7 @@ export default function CashAccounts({ summary, onUpdate }) {
               </div>
               {hasPending && (
                 <div className="mt-1 text-xs text-slate-500">
-                  Effective: <RiyalSymbol size={10} className="text-slate-500" /> {effective.toLocaleString('en-SA', { minimumFractionDigits: 2 })}
+                  Effective: {usd ? '$' : <><RiyalSymbol size={10} className="text-slate-500" />{' '}</>}{fmtMoney(effective)}
                 </div>
               )}
             </div>

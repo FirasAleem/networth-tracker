@@ -125,14 +125,13 @@ async function seedPortfolio() {
   h.free()
 }
 
+// Write-then-rename so a crash mid-write can't leave a truncated DB behind.
 export function save() {
   const data = db.export()
   const buffer = Buffer.from(data)
-  fs.writeFileSync(dbPath, buffer)
-}
-
-export function getDb() {
-  return db
+  const tmp = dbPath + '.tmp'
+  fs.writeFileSync(tmp, buffer, { flush: true })
+  fs.renameSync(tmp, dbPath)
 }
 
 export function all(sql, params = []) {

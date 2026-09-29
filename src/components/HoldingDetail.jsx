@@ -3,20 +3,10 @@ import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceL
 import { X, TrendingUp, TrendingDown, Sparkles, Calendar, Plus, Trash2, Layers, Receipt } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney, fmtQty } from '../lib/format'
+import { RANGES as ALL_RANGES, cutoffFor } from '../lib/dates'
 
-const RANGES = [
-  { key: '1M', days: 30 }, { key: '3M', days: 90 }, { key: '6M', days: 180 },
-  { key: 'YTD', ytd: true }, { key: '1Y', days: 365 }, { key: '3Y', days: 365 * 3 },
-  { key: '5Y', days: 365 * 5 }, { key: 'Max', all: true },
-]
-
-function cutoffFor(range) {
-  if (range.all) return null
-  const d = new Date()
-  if (range.ytd) return `${d.getFullYear()}-01-01`
-  d.setDate(d.getDate() - range.days)
-  return d.toISOString().split('T')[0]
-}
+// The detail chart starts at 1M (no 1D / 1W).
+const RANGES = ALL_RANGES.filter(r => !r.days || r.days >= 30)
 
 export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpdate }) {
   const [raw, setRaw] = useState([])
@@ -73,9 +63,11 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
     if (r.ok) { setLots(await r.json()); setLotForm({ quantity: '', cost_price: '', purchase_date: '' }); onUpdate?.() }
   }
 
-  async function deleteLot(id) {
-    const r = await fetch(`/api/lots/${id}`, { method: 'DELETE' })
+  async function deleteLot(l) {
+    if (!confirm(`Delete the lot of ${fmtQty(l.quantity)} @ ${fmtMoney(l.cost_price)}? This can't be undone.`)) return
+    const r = await fetch(`/api/lots/${l.id}`, { method: 'DELETE' })
     if (r.ok) { setLots(await r.json()); onUpdate?.() }
+    else alert((await r.json().catch(() => ({}))).error || 'Could not delete lot')
   }
 
   // Derive from lots so the totals update live (the holding prop is a stale snapshot).
@@ -96,18 +88,24 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
       start = i === -1 ? owned.length - 1 : i
     }
     const slice = owned.slice(start)
-    const series = slice.map(d => ({
-      date: d.date,
-      price: d.close,
-      value: d.close * holding.quantity * rate, // value always in SAR
-    }))
+    const series = slice.map(d => {
+      // With lots, use the quantity held on that date (undated lots count as always held).
+      const qty = lots.length
+        ? lots.reduce((s, l) => s + (!l.purchase_date || l.purchase_date <= d.date ? l.quantity : 0), 0)
+        : holding.quantity
+      return {
+        date: d.date,
+        price: d.close,
+        value: d.close * qty * rate, // value always in SAR
+      }
+    })
     const key = mode === 'value' ? 'value' : 'price'
     const first = series[0]?.[key] ?? 0
     const last = series[series.length - 1]?.[key] ?? 0
     const change = last - first
-    const pct = first ? (change / Math.abs(first)) * 100 : 0
+    const pct = first ? (change / Math.abs(first)) * 100 : null // no % against a zero start
     return { series, change, pct }
-  }, [raw, range, mode, scope, holding.quantity, holding.purchase_date, rate])
+  }, [raw, range, mode, scope, holding.quantity, holding.purchase_date, rate, lots])
 
   const isUp = change >= 0
   // Cost reference: price mode → cost per share (native); value mode → cost value (SAR)
@@ -206,7 +204,9 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
                   </span>
                   <span className="inline-flex items-center gap-3">
                     <span className="text-slate-500 text-xs">{l.purchase_date || '—'}</span>
-                    <button onClick={() => deleteLot(l.id)} className="text-slate-500 hover:text-loss"><Trash2 size={13} /></button>
+                    {lots.length > 1 && (
+                      <button onClick={() => deleteLot(l)} className="text-slate-500 hover:text-loss"><Trash2 size={13} /></button>
+                    )}
                   </span>
                 </div>
               ))}
@@ -275,7 +275,7 @@ export default function HoldingDetail({ holding, usdToSar = 3.75, onClose, onUpd
               <span className="font-medium">
                 {isUp ? '+' : '−'}{mode === 'price' && !sar ? `$${fmtMoney(Math.abs(change))}` : <span className="inline-flex items-center gap-1"><RiyalSymbol size={11} className="opacity-70" />{fmtMoney(Math.abs(change))}</span>}
               </span>
-              <span className="text-slate-500">({isUp ? '+' : ''}{pct.toFixed(1)}% · {range})</span>
+              <span className="text-slate-500">({pct != null ? `${isUp ? '+' : ''}${pct.toFixed(1)}% · ` : ''}{range})</span>
             </div>
           )}
         </div>

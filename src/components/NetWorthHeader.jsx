@@ -1,18 +1,12 @@
 import { TrendingUp, TrendingDown, Wallet, Building2, BarChart3 } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
-
-function formatSAR(amount) {
-  return new Intl.NumberFormat('en-SA', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(amount || 0)
-}
+import { fmtMoney } from '../lib/format'
 
 function SARValue({ amount, size = 'text-2xl', symbolSize = 20 }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <RiyalSymbol size={symbolSize} className="text-slate-400" />
-      <span>{formatSAR(amount)}</span>
+      <span>{fmtMoney(amount)}</span>
     </span>
   )
 }
@@ -58,13 +52,13 @@ export default function NetWorthHeader({ summary }) {
         <div className="flex items-center justify-center gap-4 animate-count">
           <RiyalSymbol size={36} className="text-slate-500" />
           <span className="text-5xl sm:text-6xl font-bold tracking-tight text-white">
-            {formatSAR(summary.total)}
+            {fmtMoney(summary.total)}
           </span>
         </div>
         <div className={`flex items-center justify-center gap-1 mt-3 text-sm ${isPositive ? 'text-gain' : 'text-loss'}`}>
           {isPositive ? <TrendingUp size={16} /> : <TrendingDown size={16} />}
           <span className="inline-flex items-center gap-1">
-            {isPositive ? '+' : ''}{formatSAR(totalPnL)}
+            {isPositive ? '+' : ''}{fmtMoney(totalPnL)}
             <span className="text-slate-500 ml-1">unrealized P&L</span>
           </span>
         </div>

@@ -1,4 +1,4 @@
-import { TrendingUp, TrendingDown, Sparkles } from 'lucide-react'
+import { TrendingUp, TrendingDown, Sparkles, AlertTriangle } from 'lucide-react'
 import RiyalSymbol from './RiyalSymbol'
 import { fmtMoney, fmtQty } from '../lib/format'
 
@@ -31,6 +31,11 @@ export default function DashboardHoldings({ summary, onSelect }) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="font-medium text-white truncate">{h.name || h.ticker}</span>
+                  {h.priceMissing && (
+                    <span title="No live price — valued at cost" className="shrink-0">
+                      <AlertTriangle size={12} className="text-amber-400" />
+                    </span>
+                  )}
                   {h.isFree && (
                     <span className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-400 shrink-0">
                       <Sparkles size={9} /> FREE

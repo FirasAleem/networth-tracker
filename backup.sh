@@ -7,7 +7,8 @@ cd "$(dirname "$0")/data"
 
 [ -d .git ] || { echo "data/ is not a git repo — see Sync & deploy in README"; exit 1; }
 
-git add -A
+# Only the DB: a transient networth.db.tmp from the app's atomic save must never be committed.
+git add networth.db
 if git diff --cached --quiet; then
   echo "no data changes to back up"
   exit 0

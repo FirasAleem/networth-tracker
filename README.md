@@ -58,7 +58,52 @@ docker compose up -d --build    # rebuild after pulling new code
   - **Holdings** and **cash accounts** — from `server/seed-data.js`
   - **Transactions** — imported from every `.csv` in `seed/`
 
-- To back up, just copy `data/networth.db` somewhere safe.
+- To back up by hand, just copy `data/networth.db` somewhere safe. The app saves
+  by writing a temp file and renaming it over the DB, so a plain copy is always
+  one complete version.
+
+### Automatic local backups
+
+`backup-local.sh` copies the DB once a day, runs `PRAGMA integrity_check` on the
+copy, and keeps the newest 14 in `/mnt/media/server-backups/networth` — on the
+separate media disk. It refuses to run if that disk isn't mounted, so it can
+never fill the root disk. A systemd timer (`networth-backup.timer`) runs it; it
+needs `sqlite3` on the host.
+
+```ini
+# /etc/systemd/system/networth-backup.service
+[Unit]
+Description=Net Worth Tracker SQLite backup
+RequiresMountsFor=/mnt/media
+
+[Service]
+Type=oneshot
+User=firas
+Environment=BACKUP_DIR=/mnt/media/server-backups/networth
+Environment=BACKUP_MOUNT=/mnt/media
+ExecStart=/home/firas/docker/networth-tracker/backup-local.sh
+
+# /etc/systemd/system/networth-backup.timer
+[Unit]
+Description=Daily Net Worth Tracker backup
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now networth-backup.timer
+sudo systemctl start networth-backup.service     # run one now to test
+```
+
+The **off-site** GitHub snapshot is still the manual `backup.sh` (see *Sync &
+deploy* below) — it needs your forwarded SSH key for commit signing, so it can't
+run from a timer.
 
 ---
 
@@ -89,9 +134,13 @@ CSVs in `seed/`, then reset the DB (see above) to re-seed.
 ## Using the app
 
 - **Dashboard** — big net-worth number; cash / investments / holdings cards; an
-  allocation pie; a **balance-history chart already populated from your CSVs**
-  with a time-range selector (1D…Max) that also shows the period P&L; and a
-  **holdings list** with live value and P&L per position.
+  allocation pie; a **net-worth chart** drawn from daily snapshots (cash + live
+  investments) with a time-range selector (1D…Max) that also shows the period
+  P&L; and a **holdings list** with live value and P&L per position. The server
+  records a snapshot every hour, whether or not the page is open, keyed by the
+  Riyadh calendar date (the last one of the day wins). A write is skipped when a
+  live price is unavailable rather than recording a value at cost, so a day can
+  have no snapshot. The CSV balance history lives on the **Transactions** tab.
 - **Copy to Notes** (top-right) — copies a plain-text snapshot in the original
   notes format (`x=… y=… 100x+y+z+3.75(s+a) = total`), regenerated from live
   data. The eye icon previews exactly what will be copied. Works over plain http
@@ -102,8 +151,14 @@ CSVs in `seed/`, then reset the DB (see above) to re-seed.
 - **Cash & Bank** — edit balances inline. The second field is a *pending* amount
   that's subtracted from your net worth (e.g. money you owe a friend).
 - **Transactions** — toggle between **Combined / Bank / Cash** to filter both the
-  history chart and the list. Add manually, **Import CSV** (choose which account to
-  tag it as), or **Export CSV**.
+  balance-history chart (built from the transactions) and the list. Add manually,
+  **Import CSV** (choose which account to tag it as), or **Export CSV**. Import
+  skips rows already present for that account (same date, type, amount and
+  description) and reports how many were imported / skipped / invalid. A row is
+  invalid when its date is missing or unreadable. Accepted date formats:
+  `YYYY-MM-DD` or `YYYY/MM/DD`, and day-first `DD/MM/YYYY`, `DD-MM-YYYY` or
+  `DD.MM.YYYY` (1- or 2-digit day and month; if the second number is above 12 it's
+  read as month/day). A trailing time is ignored.
 
 The Riyal glyph is an SVG, but a real Unicode Riyal Sign (`⃁`) rides along hidden
 next to it, so copying an amount copies a currency character too.
@@ -142,6 +197,9 @@ cd ~/docker/networth-tracker
 git pull && docker compose up -d --build      # or: ./deploy.sh
 ```
 
+`./deploy.sh` does the same but only rebuilds when `origin/main` has a new commit.
+Run it by hand; it's also safe to put in cron if you ever want push-to-deploy.
+
 ### Data: snapshot on the server
 
 ```bash
@@ -173,6 +231,7 @@ from the private one.
 ```bash
 npm install
 npm run dev      # Vite on :5173 (proxies /api to the backend on :2307)
+npm test         # CSV import unit tests (node --test)
 ```
 
 For a production-style run without Docker:

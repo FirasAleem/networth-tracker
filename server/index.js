@@ -1,18 +1,16 @@
 import express from 'express'
-import cors from 'cors'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
 import multer from 'multer'
-import { initDb, all, get, run, save } from './db.js'
-import { parseCSV, csvToTransactions } from './csv.js'
+import { initDb, all, get, run } from './db.js'
+import { parseCSV, csvToTransactions, splitNew } from './csv.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const app = express()
 const PORT = process.env.PORT || 2307
 const upload = multer({ storage: multer.memoryStorage() })
 
-app.use(cors())
 app.use(express.json())
 
 const USD_TO_SAR = 3.75
@@ -38,10 +36,13 @@ app.put('/api/holdings/:id', (req, res) => {
     `UPDATE holdings SET ticker=?, name=?, quantity=?, cost_price=?, purchase_date=?, account=?, currency=?, updated_at=datetime('now') WHERE id=?`,
     [ticker, name || '', quantity, cost_price, purchase_date || null, account || 'Default', currency || 'USD', req.params.id]
   )
+  // A holding with lots keeps its lot-derived quantity/cost/date; the other fields stay editable.
+  recomputeHolding(req.params.id)
   res.json(get('SELECT * FROM holdings WHERE id = ?', [req.params.id]))
 })
 
 app.delete('/api/holdings/:id', (req, res) => {
+  run('DELETE FROM lots WHERE holding_id = ?', [req.params.id])
   run('DELETE FROM holdings WHERE id = ?', [req.params.id])
   res.json({ ok: true })
 })
@@ -88,6 +89,10 @@ app.post('/api/holdings/:id/lots', (req, res) => {
 app.delete('/api/lots/:id', (req, res) => {
   const lot = get('SELECT * FROM lots WHERE id = ?', [req.params.id])
   if (!lot) return res.status(404).json({ error: 'No such lot' })
+  // recomputeHolding no-ops on zero lots, so the holding would keep the deleted lot's quantity.
+  if (get('SELECT COUNT(*) AS c FROM lots WHERE holding_id = ?', [lot.holding_id]).c === 1) {
+    return res.status(400).json({ error: "Can't delete a holding's last lot — edit or delete the holding instead" })
+  }
   run('DELETE FROM lots WHERE id = ?', [req.params.id])
   recomputeHolding(lot.holding_id)
   res.json(all('SELECT * FROM lots WHERE holding_id = ? ORDER BY purchase_date, id', [lot.holding_id]))
@@ -214,7 +219,7 @@ app.get('/api/price-history/:ticker', async (req, res) => {
     const from = req.query.from || '2024-01-01'
     const p1 = Math.floor(new Date(from).getTime() / 1000)
     const p2 = Math.floor(Date.now() / 1000)
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${req.params.ticker}?period1=${p1}&period2=${p2}&interval=1d`
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(req.params.ticker)}?period1=${p1}&period2=${p2}&interval=1d`
     const r = await fetch(url, { headers: YF_HEADERS })
     const json = await r.json()
     const result = json.chart?.result?.[0]
@@ -237,17 +242,6 @@ app.get('/api/snapshots', (req, res) => {
   const rows = all('SELECT * FROM snapshots ORDER BY date ASC')
   const parse = (b) => { try { return b ? JSON.parse(b) : null } catch { return null } }
   res.json(rows.map(r => ({ ...r, breakdown: parse(r.breakdown) })))
-})
-
-app.post('/api/snapshots', (req, res) => {
-  const { date, total, breakdown } = req.body
-  const existing = get('SELECT id FROM snapshots WHERE date = ?', [date])
-  if (existing) {
-    run('UPDATE snapshots SET total=?, breakdown=? WHERE date=?', [total, JSON.stringify(breakdown || {}), date])
-  } else {
-    run('INSERT INTO snapshots (date, total, breakdown) VALUES (?, ?, ?)', [date, total, JSON.stringify(breakdown || {})])
-  }
-  res.json({ ok: true })
 })
 
 // ── Transactions ──
@@ -296,17 +290,23 @@ app.post('/api/transactions/import', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' })
   const account = req.body.account || ''
   const rows = parseCSV(req.file.buffer.toString('utf-8'))
-  const txns = csvToTransactions(rows)
+  const { txns, invalid } = csvToTransactions(rows)
   if (txns.length === 0) {
-    return res.status(400).json({ error: 'CSV must have a date and a value/amount column' })
+    return res.status(400).json({
+      error: invalid
+        ? `No rows with a readable date (${invalid} skipped) — dates must be YYYY-MM-DD or DD/MM/YYYY`
+        : 'CSV must have a date and a value/amount column'
+    })
   }
-  for (const t of txns) {
+  const existing = all('SELECT date, type, amount, description FROM transactions WHERE account = ?', [account])
+  const { fresh, skipped } = splitNew(existing, txns)
+  for (const t of fresh) {
     run(
       'INSERT INTO transactions (date, category, description, amount, type, account) VALUES (?, ?, ?, ?, ?, ?)',
       [t.date, t.category, t.description, t.amount, t.type, account]
     )
   }
-  res.json({ imported: txns.length })
+  res.json({ imported: fresh.length, skipped: skipped.length, invalid })
 })
 
 app.get('/api/transactions/export', (req, res) => {
@@ -328,8 +328,8 @@ app.delete('/api/transactions/:id', (req, res) => {
 
 // ── Net Worth Summary ──
 
-app.get('/api/summary', async (req, res) => {
-  const holdings = all('SELECT * FROM holdings')
+async function computeSummary() {
+  const holdings = all('SELECT h.*, (SELECT COUNT(*) FROM lots l WHERE l.holding_id = h.id) AS lot_count FROM holdings h')
   const cash = all('SELECT * FROM cash_accounts')
 
   const tickers = [...new Set(holdings.map(h => h.ticker))]
@@ -349,6 +349,7 @@ app.get('/api/summary', async (req, res) => {
   const holdingDetails = holdings.map(h => {
     const priceData = prices[h.ticker]
     const currentPrice = priceData?.price || h.cost_price
+    const priceMissing = !priceData?.price // no live/cached quote: valued at cost
     const marketValue = h.quantity * currentPrice
     const costValue = h.quantity * h.cost_price
     const isFree = costValue === 0
@@ -356,21 +357,35 @@ app.get('/api/summary', async (req, res) => {
     const pnlPercent = isFree ? null : (pnl / costValue) * 100
     const marketValueSAR = h.currency === 'USD' ? marketValue * USD_TO_SAR : marketValue
     investmentTotal += marketValueSAR
-    return { ...h, currentPrice, marketValue, costValue, isFree, pnl, pnlPercent, marketValueSAR, priceData }
+    return { ...h, currentPrice, marketValue, costValue, isFree, pnl, pnlPercent, marketValueSAR, priceData, priceMissing }
   })
   totalSAR += investmentTotal
 
-  // Daily net-worth snapshot (one row/day) so the dashboard can chart real net
-  // worth — cash + live investments — over time. ponytail: upsert on read, no
-  // cron; rewrites the DB file each call (~60s), fine at this scale.
-  const today = new Date().toISOString().split('T')[0]
-  const breakdown = JSON.stringify({ cash: cashTotal, investments: investmentTotal })
+  return { total: totalSAR, cashTotal, investmentTotal, holdings: holdingDetails, cash: cashDetails, usdToSar: USD_TO_SAR }
+}
+
+app.get('/api/summary', async (req, res) => {
+  res.json(await computeSummary())
+})
+
+// Daily net-worth snapshot (one row per Riyadh calendar day) so the dashboard can
+// chart real net worth — cash + live investments — over time. ponytail: recorded
+// hourly from start(), no cron — the last write of each Riyadh day wins, and days
+// the process is down get no row. Skipped if any holding has no live price: a gap
+// beats a snapshot valued at cost.
+async function recordSnapshot() {
+  const s = await computeSummary()
+  const missing = [...new Set(s.holdings.filter(h => h.priceMissing).map(h => h.ticker))]
+  if (missing.length) {
+    console.warn('snapshot skipped — no live price for', missing.join(', '))
+    return
+  }
+  const date = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Riyadh' })
+  const breakdown = JSON.stringify({ cash: s.cashTotal, investments: s.investmentTotal })
   run(`INSERT INTO snapshots (date, total, breakdown) VALUES (?, ?, ?)
        ON CONFLICT(date) DO UPDATE SET total=excluded.total, breakdown=excluded.breakdown`,
-      [today, totalSAR, breakdown])
-
-  res.json({ total: totalSAR, cashTotal, investmentTotal, holdings: holdingDetails, cash: cashDetails, usdToSar: USD_TO_SAR })
-})
+      [date, s.total, breakdown])
+}
 
 // ── Serve frontend in production ──
 
@@ -399,7 +414,8 @@ function seedTransactions() {
   let total = 0
   for (const f of files) {
     const account = accountFromFilename(f)
-    const txns = csvToTransactions(parseCSV(fs.readFileSync(path.join(seedDir, f), 'utf-8')))
+    const { txns, invalid } = csvToTransactions(parseCSV(fs.readFileSync(path.join(seedDir, f), 'utf-8')))
+    if (invalid) console.warn(`${f}: skipped ${invalid} row(s) with a missing or unrecognised date`)
     for (const t of txns) {
       run('INSERT INTO transactions (date, category, description, amount, type, account) VALUES (?, ?, ?, ?, ?, ?)',
         [t.date, t.category, t.description, t.amount, t.type, account])
@@ -415,6 +431,9 @@ async function start() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`Net Worth Tracker running on http://localhost:${PORT}`)
   })
+  const snap = () => recordSnapshot().catch(e => console.error('snapshot failed:', e))
+  snap()
+  setInterval(snap, 3_600_000)
 }
 
 start().catch(console.error)

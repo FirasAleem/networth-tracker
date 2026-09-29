@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Poll-based auto-deploy. Run from cron on the server; it pulls origin/main
-# and rebuilds the container only when there's a new commit. Your data/ and
-# seed-data.js are gitignored/untracked, so git reset never touches them.
+# Pull-and-rebuild deploy. Run it by hand on the server; it pulls origin/main
+# and rebuilds the container only when there's a new commit, so it's also safe
+# to put in cron if you ever want push-to-deploy. Your data/ and seed-data.js
+# are gitignored/untracked, so git reset never touches them.
 set -euo pipefail
 cd "$(dirname "$0")"
 
