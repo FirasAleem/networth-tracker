@@ -60,6 +60,7 @@ export async function initDb() {
       start_date TEXT,                   -- deposit term
       maturity_date TEXT,
       expected_profit REAL,              -- deposit: total at maturity; savings: per month
+      profit_only INTEGER NOT NULL DEFAULT 0, -- 1 = not my money: only the profit counts (savings/deposit)
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `)
@@ -68,9 +69,10 @@ export async function initDb() {
   if (!cashCols.includes('pending')) {
     db.run('ALTER TABLE cash_accounts ADD COLUMN pending REAL NOT NULL DEFAULT 0')
   }
-  // Migration: savings/deposit profit columns (all nullable).
+  // Migration: savings/deposit profit columns (nullable, except the profit_only flag).
   const profitCols = {
-    profit_rate: 'REAL', payout: 'TEXT', start_date: 'TEXT', maturity_date: 'TEXT', expected_profit: 'REAL'
+    profit_rate: 'REAL', payout: 'TEXT', start_date: 'TEXT', maturity_date: 'TEXT', expected_profit: 'REAL',
+    profit_only: 'INTEGER NOT NULL DEFAULT 0'
   }
   for (const [col, type] of Object.entries(profitCols)) {
     if (!cashCols.includes(col)) db.run(`ALTER TABLE cash_accounts ADD COLUMN ${col} ${type}`)
@@ -84,9 +86,15 @@ export async function initDb() {
       count INTEGER NOT NULL,
       paid INTEGER NOT NULL DEFAULT 0,
       first_due TEXT,
+      monthly_pct REAL,                  -- NULL: equal split; else % of total a month, then a balloon (SNB Smart Payment Plan)
       created_at TEXT DEFAULT (datetime('now'))
     )
   `)
+  // Migration: add `monthly_pct` (balloon plans) to installments tables that predate it.
+  const planCols = db.exec('PRAGMA table_info(installments)')[0]?.values.map(r => r[1]) || []
+  if (!planCols.includes('monthly_pct')) {
+    db.run('ALTER TABLE installments ADD COLUMN monthly_pct REAL')
+  }
   db.run(`
     CREATE TABLE IF NOT EXISTS snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,

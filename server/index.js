@@ -123,11 +123,13 @@ function cashParams(b) {
   if (badDate(b.start_date) || badDate(b.maturity_date)) {
     return { error: 'start_date and maturity_date must be dates (YYYY-MM-DD) or empty' }
   }
+  // "Not my money": only meaningful on savings/deposits, so it's stored 0 on anything else.
+  const profitOnly = [true, 1, '1'].includes(b.profit_only) && ['savings', 'deposit'].includes(type)
   return {
     params: [
       name, Number(b.amount) || 0, Number(b.pending) || 0, type, currency,
       numOrNull(b.profit_rate), blank(b.payout) ? null : b.payout,
-      parseDate(b.start_date), parseDate(b.maturity_date), numOrNull(b.expected_profit)
+      parseDate(b.start_date), parseDate(b.maturity_date), numOrNull(b.expected_profit), profitOnly ? 1 : 0
     ]
   }
 }
@@ -140,8 +142,8 @@ app.post('/api/cash', (req, res) => {
   const { error, params } = cashParams(req.body)
   if (error) return res.status(400).json({ error })
   const result = run(
-    `INSERT INTO cash_accounts (name, amount, pending, type, currency, profit_rate, payout, start_date, maturity_date, expected_profit)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO cash_accounts (name, amount, pending, type, currency, profit_rate, payout, start_date, maturity_date,
+       expected_profit, profit_only) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     params
   )
   res.json(get('SELECT * FROM cash_accounts WHERE id = ?', [result.lastInsertRowid]))
@@ -152,7 +154,7 @@ app.put('/api/cash/:id', (req, res) => {
   if (error) return res.status(400).json({ error })
   run(
     `UPDATE cash_accounts SET name=?, amount=?, pending=?, type=?, currency=?, profit_rate=?, payout=?, start_date=?, maturity_date=?,
-       expected_profit=?, updated_at=datetime('now') WHERE id=?`,
+       expected_profit=?, profit_only=?, updated_at=datetime('now') WHERE id=?`,
     [...params, req.params.id]
   )
   res.json(get('SELECT * FROM cash_accounts WHERE id = ?', [req.params.id]))
@@ -166,24 +168,34 @@ app.delete('/api/cash/:id', (req, res) => {
 // ── Installments ──
 // No list endpoint: the plans ride along in /api/summary.
 
-// Validate a plan body → { error } or the SQL params in column order.
+// Validate a plan body → { error } or the SQL params in column order. A blank `monthly_pct` is an
+// equal split; a set one makes a balloon plan (that % of total a month for `count` months, then the
+// rest as a balloon), which has one more payment to tick off.
 function installmentParams(b) {
   const name = String(b.name ?? '').trim()
   const total = Number(b.total)
   const count = Number(b.count)
+  const pct = blank(b.monthly_pct) ? null : Number(b.monthly_pct)
   const paid = Number(b.paid)
   if (!name) return { error: 'name is required' }
   if (!Number.isFinite(total) || total <= 0) return { error: 'total must be a number greater than 0' }
   if (!Number.isInteger(count) || count < 1) return { error: 'count must be a whole number, 1 or more' }
-  if (!Number.isInteger(paid) || paid < 0 || paid > count) return { error: 'paid must be a whole number from 0 to count' }
+  if (pct !== null && (!Number.isFinite(pct) || pct <= 0)) {
+    return { error: 'monthly_pct must be a number greater than 0, or empty for an equal split' }
+  }
+  if (pct !== null && pct * count >= 100) {
+    return { error: 'monthly % × months must be under 100 — use an equal plan to split the whole amount' }
+  }
+  const payments = count + (pct === null ? 0 : 1) // the balloon is the last payment
+  if (!Number.isInteger(paid) || paid < 0 || paid > payments) return { error: `paid must be a whole number from 0 to ${payments}` }
   if (badDate(b.first_due)) return { error: 'first_due must be a date (YYYY-MM-DD) or empty' }
-  return { params: [name, total, count, paid, parseDate(b.first_due)] }
+  return { params: [name, total, count, paid, parseDate(b.first_due), pct] }
 }
 
 app.post('/api/installments', (req, res) => {
   const { error, params } = installmentParams({ paid: 0, ...req.body })
   if (error) return res.status(400).json({ error })
-  const result = run('INSERT INTO installments (name, total, count, paid, first_due) VALUES (?, ?, ?, ?, ?)', params)
+  const result = run('INSERT INTO installments (name, total, count, paid, first_due, monthly_pct) VALUES (?, ?, ?, ?, ?, ?)', params)
   res.json(get('SELECT * FROM installments WHERE id = ?', [result.lastInsertRowid]))
 })
 
@@ -192,7 +204,7 @@ app.put('/api/installments/:id', (req, res) => {
   if (!plan) return res.status(404).json({ error: 'No such installment plan' })
   const { error, params } = installmentParams(req.body)
   if (error) return res.status(400).json({ error })
-  run('UPDATE installments SET name=?, total=?, count=?, paid=?, first_due=? WHERE id=?', [...params, req.params.id])
+  run('UPDATE installments SET name=?, total=?, count=?, paid=?, first_due=?, monthly_pct=? WHERE id=?', [...params, req.params.id])
   res.json(get('SELECT * FROM installments WHERE id = ?', [req.params.id]))
 })
 
@@ -405,13 +417,13 @@ app.delete('/api/transactions/:id', (req, res) => {
 async function computeSummary() {
   const holdings = all('SELECT h.*, (SELECT COUNT(*) FROM lots l WHERE l.holding_id = h.id) AS lot_count FROM holdings h')
   const cash = all('SELECT * FROM cash_accounts')
-  const plans = all('SELECT * FROM installments ORDER BY paid >= count, id') // open plans first
+  const plans = all('SELECT * FROM installments')
 
   const tickers = [...new Set(holdings.map(h => h.ticker))]
   const prices = tickers.length > 0 ? await fetchPrices(tickers) : {}
 
   // Effective cash = balance minus any pending amounts (e.g. money owed to a friend); a matured
-  // deposit also counts its profit. See accountValue.
+  // deposit also counts its profit, and a profit-only account counts only that. See accountValue.
   const today = riyadhToday()
   const cashDetails = cash.map(c => {
     const v = accountValue(c, today)
@@ -423,8 +435,10 @@ async function computeSummary() {
   const cashTotal = sumSAR(cashDetails.filter(c => !isSavings(c)))
   const savingsTotal = sumSAR(cashDetails.filter(isSavings))
 
-  // Unpaid remainder of each installment plan (SAR only) is a liability.
+  // Unpaid remainder of each installment plan (SAR only) is a liability. Open plans first, then by id
+  // (sorted on the computed paidOff: a balloon plan still owes its balloon after `count` payments).
   const installments = plans.map(p => ({ ...p, ...installmentState(p) }))
+    .sort((a, b) => a.paidOff - b.paidOff || a.id - b.id)
   const installmentsTotal = installments.reduce((sum, p) => sum + p.remaining, 0)
 
   let investmentTotal = 0

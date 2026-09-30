@@ -23,9 +23,12 @@ export function addMonths(date, n) {
 // What a cash_accounts row is worth today, in the account's own currency. Only
 // `effective` feeds net worth; the profit fields are for display. Savings: the
 // balance counts and profit shows up once you update it. Deposits: principal
-// until maturity, then principal + profit.
+// until maturity, then principal + profit. A profit-only ("not my money")
+// savings/deposit counts just its expected profit and never the principal: a
+// deposit's full profit from day one, a savings account's yearly profit.
 export function accountValue(c, today) {
-  const base = c.amount - Math.abs(c.pending || 0)
+  const pending = Math.abs(c.pending || 0)
+  const base = c.amount - pending
   const rate = num(c.profit_rate)
   const typed = num(c.expected_profit)
   const none = { effective: base, expectedProfit: null, monthlyProfit: null, matured: false, daysLeft: null }
@@ -33,7 +36,8 @@ export function accountValue(c, today) {
   if (c.type === 'savings') {
     // Typed amount is per month; expectedProfit is the yearly figure.
     const monthlyProfit = typed ?? (rate == null ? null : c.amount * rate / 100 / 12)
-    return { ...none, monthlyProfit, expectedProfit: monthlyProfit == null ? null : monthlyProfit * 12 }
+    const expectedProfit = monthlyProfit == null ? null : monthlyProfit * 12
+    return { ...none, monthlyProfit, expectedProfit, effective: c.profit_only ? (expectedProfit || 0) - pending : base }
   }
 
   if (c.type === 'deposit') {
@@ -46,21 +50,34 @@ export function accountValue(c, today) {
       expectedProfit,
       matured,
       daysLeft: end ? Math.max(0, days(today, end)) : null,
-      effective: base + (matured ? expectedProfit || 0 : 0)
+      effective: c.profit_only ? (expectedProfit || 0) - pending : base + (matured ? expectedProfit || 0 : 0)
     }
   }
 
   return none
 }
 
-// A credit-card installment plan: `total` split into `count` equal monthly payments, `paid` ticked off.
+// A credit-card installment plan; `paid` payments are ticked off in order. Equal split (monthly_pct
+// null): `total` in `count` equal payments. Balloon plan (the SNB Smart Payment Plan): monthly_pct% of
+// `total` for `count` months, then the rest as one balloon payment the month after, so it has
+// count + 1 payments and the balloon is the last one.
 export function installmentState(p) {
-  const perInstallment = p.total / p.count
-  const paidOff = p.paid >= p.count
+  const pct = num(p.monthly_pct)
+  const perInstallment = pct == null ? p.total / p.count : p.total * pct / 100
+  const balloon = pct == null ? null : p.total - perInstallment * p.count
+  const payments = p.count + (pct == null ? 0 : 1)
+  const paidOff = p.paid >= payments
+  // Not paid off means only regular payments are ticked, so a balloon plan owes total − paid × each.
+  const remaining = paidOff ? 0 // exactly 0, no float dust
+    : pct == null ? perInstallment * (p.count - p.paid)
+    : p.total - perInstallment * p.paid
   return {
     perInstallment,
-    remaining: perInstallment * (p.count - p.paid), // exactly 0 once fully paid
+    balloon,
+    payments,
+    remaining,
     paidOff,
-    nextDue: !paidOff && p.first_due ? addMonths(p.first_due, p.paid) : null
+    nextDue: !paidOff && p.first_due ? addMonths(p.first_due, p.paid) : null, // the balloon: a month after the last regular one
+    nextAmount: paidOff ? null : p.paid < p.count ? perInstallment : balloon
   }
 }

@@ -160,11 +160,16 @@ CSVs in `seed/`, then reset the DB (see above) to re-seed.
   dates, plus a rate or the total profit) counts just its principal until
   maturity, with the expected profit shown alongside. Once the maturity date
   arrives (Riyadh time) it counts principal + profit and gets a **matured** flag —
-  your cue to move the money into cash.
-- **Installments** — a credit-card purchase split into N equal monthly payments.
-  Tick each one off as you pay it; the unpaid remainder is subtracted from your
-  net worth. Only these plans are tracked, not the card's regular balance, and
-  only in SAR.
+  your cue to move the money into cash. Tick **Not my money** for funds you
+  hold for someone else: only the profit counts (a deposit's full expected
+  profit from day one, or a savings account's expected yearly profit), never
+  the principal.
+- **Installments** — a credit-card purchase, by default a **balloon** plan like
+  the SNB Smart Payment Plan (5% of the purchase a month for 12 months, or 3 or
+  6, at 0%, then the rest as one balloon payment the month after; the balloon is
+  the last dot you tick), or split into N equal monthly payments. Tick each one
+  off as you pay it; the unpaid remainder is subtracted from your net worth.
+  Only these plans are tracked, not the card's regular balance, and only in SAR.
 - **Transactions** — toggle between **Combined / Bank / Cash** to filter both the
   balance-history chart (built from the transactions) and the list. Add manually,
   **Import CSV** (choose which account to tag it as), or **Export CSV**. Import

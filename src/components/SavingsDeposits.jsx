@@ -8,7 +8,7 @@ import { send } from '../lib/api'
 const INPUT = 'w-full px-3 py-2 bg-dark-600 border border-dark-500 rounded-lg text-white text-sm focus:outline-none focus:border-accent'
 const EMPTY = {
   id: null, type: 'savings', name: '', amount: '', pending: 0, currency: 'SAR',
-  profit_rate: '', payout: 'monthly', start_date: '', maturity_date: '', expected_profit: ''
+  profit_rate: '', payout: 'monthly', start_date: '', maturity_date: '', expected_profit: '', profit_only: false
 }
 
 const blank = v => v ?? ''
@@ -18,7 +18,8 @@ function toForm(row) {
   return {
     id: row.id, type: row.type, name: row.name, amount: row.amount, pending: row.pending || 0, currency: row.currency,
     profit_rate: blank(row.profit_rate), payout: row.payout || 'monthly',
-    start_date: blank(row.start_date), maturity_date: blank(row.maturity_date), expected_profit: blank(row.expected_profit)
+    start_date: blank(row.start_date), maturity_date: blank(row.maturity_date), expected_profit: blank(row.expected_profit),
+    profit_only: !!row.profit_only // stored as 0/1
   }
 }
 
@@ -37,7 +38,8 @@ function toPayload(f) {
     payout: savings && f.profit_rate !== '' ? f.payout : null,
     start_date: savings ? null : f.start_date || null,
     maturity_date: savings ? null : f.maturity_date || null,
-    expected_profit: num(f.expected_profit)
+    expected_profit: num(f.expected_profit),
+    profit_only: f.profit_only
   }
 }
 
@@ -85,7 +87,17 @@ function Detail({ parts }) {
   )
 }
 
+// Profit-only ("not my money") rows: only the profit counts toward net worth.
+function CountsLine({ value, usd }) {
+  return (
+    <div className="mt-1 text-xs text-slate-500">
+      Counts <span className="text-gain">+<Amt value={value} usd={usd} /></span> profit only
+    </div>
+  )
+}
+
 function SavingsBody({ row, usd, value, dirty, onChange, onSave }) {
+  const notMine = !!row.profit_only
   return (
     <>
       <div className="flex items-center gap-2">
@@ -97,7 +109,7 @@ function SavingsBody({ row, usd, value, dirty, onChange, onSave }) {
           onChange={e => onChange(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && onSave()}
           aria-label={`${row.name} balance`}
-          className="flex-1 min-w-0 bg-transparent text-2xl font-semibold text-white focus:outline-none"
+          className={`flex-1 min-w-0 bg-transparent text-2xl font-semibold focus:outline-none ${notMine ? 'text-slate-400' : 'text-white'}`}
         />
         {dirty && (
           <button
@@ -114,11 +126,13 @@ function SavingsBody({ row, usd, value, dirty, onChange, onSave }) {
         row.payout && `paid ${row.payout}`,
         row.monthlyProfit != null && <>≈ <Amt value={row.monthlyProfit} usd={usd} />/mo{row.profit_rate == null && ' expected'}</>
       ]} />
+      {notMine && <CountsLine value={row.effective} usd={usd} />}
     </>
   )
 }
 
 function DepositBody({ row, usd }) {
+  const notMine = !!row.profit_only
   const pct = termProgress(row)
   const term = row.start_date && row.maturity_date
     ? `${fmtDate(row.start_date)} → ${fmtDate(row.maturity_date)}`
@@ -128,7 +142,7 @@ function DepositBody({ row, usd }) {
     <>
       <div className="flex items-center gap-2">
         <Cur usd={usd} />
-        <span className="text-2xl font-semibold text-white">{fmtMoney(row.amount)}</span>
+        <span className={`text-2xl font-semibold ${notMine ? 'text-slate-400' : 'text-white'}`}>{fmtMoney(row.amount)}</span>
       </div>
       <Detail parts={[row.profit_rate != null && `${row.profit_rate}% p.a.`, term]} />
       {pct != null && (
@@ -146,7 +160,7 @@ function DepositBody({ row, usd }) {
       {row.matured ? (
         <div className="mt-2">
           <span className="inline-block text-xs px-2 py-0.5 rounded bg-amber-500/15 text-amber-400 font-medium">
-            Matured — move it to cash
+            {notMine ? 'Matured — move the profit to cash' : 'Matured — move it to cash'}
           </span>
         </div>
       ) : row.daysLeft != null && (
@@ -154,7 +168,9 @@ function DepositBody({ row, usd }) {
           {row.daysLeft} {row.daysLeft === 1 ? 'day' : 'days'} left
         </div>
       )}
-      {row.expectedProfit != null && (
+      {notMine ? (
+        <CountsLine value={row.effective} usd={usd} />
+      ) : row.expectedProfit != null && (
         <div className="mt-1 text-xs text-slate-500">
           Expected profit <span className="text-gain">+<Amt value={row.expectedProfit} usd={usd} /></span>{' '}
           {row.matured ? 'included' : 'at maturity'}
@@ -203,7 +219,8 @@ export default function SavingsDeposits({ summary, onUpdate }) {
   async function saveBalance(row) {
     const amount = parseFloat(draft[row.id])
     if (Number.isNaN(amount)) return alert('Enter a valid balance.')
-    const err = await send('PUT', `/api/cash/${row.id}`, { ...row, amount })
+    // The whole row goes back; profit_only is stored as 0/1 but the API takes a boolean.
+    const err = await send('PUT', `/api/cash/${row.id}`, { ...row, amount, profit_only: !!row.profit_only })
     if (err) return alert(err)
     setDraft(prev => { const n = { ...prev }; delete n[row.id]; return n })
     onUpdate()
@@ -337,6 +354,16 @@ export default function SavingsDeposits({ summary, onUpdate }) {
             )}
           </div>
 
+          <label className="flex items-center gap-2 w-fit text-xs text-slate-300 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.profit_only}
+              onChange={e => set({ profit_only: e.target.checked })}
+              className="w-4 h-4 rounded accent-accent"
+            />
+            Not my money — count only the profit
+          </label>
+
           <div className="flex flex-wrap items-center gap-3">
             <button
               type="submit"
@@ -359,10 +386,13 @@ export default function SavingsDeposits({ summary, onUpdate }) {
             const usd = row.currency === 'USD'
             return (
               <div key={row.id} className="p-4 bg-dark-700 rounded-xl border border-dark-500 hover:border-dark-400 transition-colors">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <span className="text-sm text-slate-300 truncate">{row.name}</span>
-                  <div className="flex items-center gap-1 shrink-0">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 mb-2">
+                  <span className="min-w-0 grow basis-36 text-sm text-slate-300 truncate">{row.name}</span>
+                  <div className="ml-auto flex items-center gap-1 shrink-0">
                     <span className="text-xs text-slate-500 px-2 py-0.5 bg-dark-600 rounded">{row.currency}</span>
+                    {row.profit_only ? (
+                      <span className="text-xs text-slate-500 px-2 py-0.5 border border-dark-500 rounded whitespace-nowrap">not mine</span>
+                    ) : null}
                     <button
                       onClick={() => openForm(toForm(row))}
                       aria-label={`Edit ${row.name}`}

@@ -13,8 +13,9 @@
 //
 // SAR stock holdings become priced terms (x), SAR cash accounts of every type
 // become plain vars (y, z…) — "+profit" once a deposit has matured, "-pending"
-// for pending amounts — and USD accounts are grouped under the 3.75 conversion
-// (s, a…), with variable letters mnemonic to the account name where possible.
+// for pending amounts, and just the profit for a profit-only ("not my money")
+// account — and USD accounts are grouped under the 3.75 conversion (s, a…),
+// with variable letters mnemonic to the account name where possible.
 // Installments still owed are a var (i) subtracted at the end.
 
 const plain = (n) => {
@@ -51,12 +52,14 @@ export function buildNotesText(summary) {
   }
 
   // SAR cash accounts (all types) → plain vars (y, z…); a matured deposit's
-  // profit is added and pending shown as a subtraction
+  // profit is added and pending shown as a subtraction. A profit-only ("not my
+  // money") account is just its expected profit — the principal isn't counted.
   for (const c of (summary.cash || []).filter(c => c.currency === 'SAR')) {
     const v = pick('y', ['z', 'p', 'q', 'r'])
     const pend = Math.abs(c.pending || 0)
     const profit = c.matured && c.expectedProfit ? `+${plain(c.expectedProfit)}` : ''
-    defs.push(`${v}=${plain(c.amount)}${profit}${pend ? `-${plain(pend)}` : ''}`)
+    const base = c.profit_only ? plain(c.expectedProfit || 0) : `${plain(c.amount)}${profit}`
+    defs.push(`${v}=${base}${pend ? `-${plain(pend)}` : ''}`)
     sarTerms.push(v)
   }
 
